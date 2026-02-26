@@ -17,6 +17,7 @@ export default function SpaceSelect() {
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     if (!orgId) return;
@@ -72,16 +73,53 @@ export default function SpaceSelect() {
     );
   }
 
+  const createFirstSpace = async () => {
+    if (!orgId || creating) return;
+    setCreating(true);
+    setError("");
+    try {
+      const { data } = await api.post<{ space: Space }>(`/organizations/${orgId}/spaces`, {
+        name: "Main Office",
+      });
+      navigate("/office", {
+        state: { orgId, spaceId: data.space.id, spaceName: data.space.name },
+      });
+    } catch {
+      setError("Failed to create space");
+    } finally {
+      setCreating(false);
+    }
+  };
+
   if (spaces.length === 0) {
     return (
-      <div className="p-6">
-        <p className="text-muted-foreground">No spaces in this organization yet.</p>
-        <Link
-          to="/dashboard"
-          className="mt-2 inline-block text-primary underline-offset-4 hover:underline"
-        >
-          Back to Dashboard
-        </Link>
+      <div className="mx-auto max-w-md px-4 py-8">
+        <Card>
+          <CardHeader>
+            <CardTitle>No spaces yet</CardTitle>
+            <CardDescription>
+              This organization doesn&apos;t have a space yet. Create one to enter the virtual office.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {error && (
+              <p className="text-sm text-destructive">{error}</p>
+            )}
+            <Button
+              className="w-full"
+              onClick={createFirstSpace}
+              disabled={creating}
+            >
+              {creating ? "Creating…" : "Create Main Office"}
+            </Button>
+            <Link
+              to="/dashboard"
+              className="mt-4 block text-center text-sm text-primary underline-offset-4 hover:underline"
+            >
+              Back to Dashboard
+            </Link>
+          </CardContent>
+        </Card>
       </div>
     );
   }

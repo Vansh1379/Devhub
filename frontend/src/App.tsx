@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { Link, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { Link, Route, Routes } from "react-router-dom";
 import { api } from "@/api";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import OrgEntry from "./pages/OrgEntry";
+import Office from "./pages/Office";
 
 const Home: React.FC = () => {
   const { user } = useAuth();
@@ -34,41 +35,6 @@ const Home: React.FC = () => {
             <Link to="/register" className="text-primary underline-offset-4 hover:underline">Register</Link>
           </>
         )}
-      </nav>
-    </div>
-  );
-};
-
-const Office: React.FC = () => {
-  const location = useLocation();
-  const navigate = useNavigate();
-  const state = location.state as { orgId?: string; spaceId?: string; spaceName?: string } | null;
-  const hasSpace = state?.spaceId && state?.spaceName;
-
-  useEffect(() => {
-    if (!hasSpace && location.pathname === "/office") {
-      navigate("/dashboard", { replace: true });
-    }
-  }, [hasSpace, location.pathname, navigate]);
-
-  if (!state?.spaceId || !state?.spaceName) {
-    return (
-      <div className="flex min-h-screen items-center justify-center p-6">
-        <p className="text-muted-foreground">Loading…</p>
-      </div>
-    );
-  }
-
-  const spaceName = state!.spaceName;
-  return (
-    <div className="min-h-screen bg-background p-8">
-      <h2 className="text-2xl font-semibold tracking-tight">Office</h2>
-      <p className="mt-2 text-muted-foreground">
-        You are in space <strong className="font-medium text-foreground">{spaceName}</strong>. 3D view and realtime presence will come in Phase 3.
-      </p>
-      <nav className="mt-4 flex gap-4">
-        <Link to="/" className="text-primary underline-offset-4 hover:underline">Home</Link>
-        <Link to="/dashboard" className="text-primary underline-offset-4 hover:underline">Dashboard</Link>
       </nav>
     </div>
   );
