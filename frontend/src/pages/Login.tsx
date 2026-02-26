@@ -40,7 +40,7 @@ export default function Login() {
     setSubmitting(true);
     try {
       await login(email, password);
-      navigate("/dashboard", { replace: true });
+      navigate("/", { replace: true });
     } catch {
       // error set in context
     } finally {

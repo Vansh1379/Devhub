@@ -6,8 +6,173 @@ const MOON_COLOR = "#f4f1de";
 const MOON_GLOW = "rgba(244, 241, 222, 0.15)";
 const STAR_COLOR = "#e8e6e3";
 const CLOUD_COLORS = ["#2d3a4f", "#3d4f6f", "#4a5f7a", "#5a6f8a"];
+const BIRD_COLOR = "rgba(255, 255, 255, 0.2)";
+const DOG_COLOR = "rgba(255, 255, 255, 0.22)";
 
-function makeStars(count: number, width: number, height: number): { x: number; y: number; r: number; twinkle: number }[] {
+function makeDogs(
+  count: number,
+  width: number,
+  height: number,
+): {
+  x: number;
+  y: number;
+  speed: number;
+  runPhase: number;
+  size: number;
+  seed: number;
+  right: boolean;
+}[] {
+  const out: {
+    x: number;
+    y: number;
+    speed: number;
+    runPhase: number;
+    size: number;
+    seed: number;
+    right: boolean;
+  }[] = [];
+  for (let i = 0; i < count; i++) {
+    out.push({
+      x: Math.random() * width,
+      y: height * (0.5 + Math.random() * 0.4),
+      speed: 45 + Math.random() * 35,
+      runPhase: Math.random() * Math.PI * 2,
+      size: 0.8 + Math.random() * 0.4,
+      seed: i * 11,
+      right: Math.random() > 0.5,
+    });
+  }
+  return out;
+}
+
+function drawDog(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  runPhase: number,
+  size: number,
+  goingRight: boolean,
+) {
+  const dir = goingRight ? 1 : -1;
+  const s = 12 * size;
+  const legCycle = Math.sin(runPhase * 2) * 0.5 + 0.5;
+  const legCycle2 = Math.sin(runPhase * 2 + Math.PI) * 0.5 + 0.5;
+  ctx.strokeStyle = DOG_COLOR;
+  ctx.fillStyle = DOG_COLOR;
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  ctx.save();
+  ctx.translate(x, y);
+  if (!goingRight) ctx.scale(-1, 1);
+
+  ctx.beginPath();
+  ctx.ellipse(s * 0.8, 0, s * 1.1, s * 0.5, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(s * 1.9, -s * 0.1, s * 0.45, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(s * 1.85, -s * 0.5);
+  ctx.lineTo(s * 2.1, -s * 0.7);
+  ctx.lineTo(s * 2.15, -s * 0.45);
+  ctx.stroke();
+
+  const legY = s * 0.35;
+  const legH = s * 0.5;
+  [
+    [s * 0.5, legCycle],
+    [s * 1.1, legCycle2],
+    [s * 0.2, legCycle2],
+    [s * 0.8, legCycle],
+  ].forEach(([lx, t]) => {
+    const lift = (1 - t) * legH * 0.6;
+    ctx.beginPath();
+    ctx.moveTo(lx, legY);
+    ctx.lineTo(lx + dir * 4, legY + legH - lift);
+    ctx.stroke();
+  });
+
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.3, 0);
+  ctx.lineTo(-s * 0.6 - Math.sin(runPhase) * 3, -s * 0.3);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function makeBirds(
+  count: number,
+  width: number,
+  height: number,
+): {
+  x: number;
+  y: number;
+  speed: number;
+  wingPhase: number;
+  size: number;
+  seed: number;
+}[] {
+  const out: {
+    x: number;
+    y: number;
+    speed: number;
+    wingPhase: number;
+    size: number;
+    seed: number;
+  }[] = [];
+  for (let i = 0; i < count; i++) {
+    out.push({
+      x: Math.random() * width,
+      y: height * (0.15 + Math.random() * 0.6),
+      speed: 25 + Math.random() * 35,
+      wingPhase: Math.random() * Math.PI * 2,
+      size: 0.9 + Math.random() * 0.5,
+      seed: i * 7,
+    });
+  }
+  return out;
+}
+
+function drawBird(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  wingPhase: number,
+  size: number,
+  goingRight: boolean,
+) {
+  const flap = Math.sin(wingPhase) * 0.4;
+  const scale = 14 * size;
+  const dir = goingRight ? 1 : -1;
+  ctx.strokeStyle = BIRD_COLOR;
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(x - dir * scale, y);
+  ctx.quadraticCurveTo(
+    x - dir * scale * 0.3,
+    y - scale * (0.6 + flap),
+    x,
+    y + scale * 0.2,
+  );
+  ctx.quadraticCurveTo(
+    x + dir * scale * 0.3,
+    y - scale * (0.6 - flap),
+    x + dir * scale,
+    y,
+  );
+  ctx.stroke();
+}
+
+function makeStars(
+  count: number,
+  width: number,
+  height: number,
+): { x: number; y: number; r: number; twinkle: number }[] {
   const out: { x: number; y: number; r: number; twinkle: number }[] = [];
   for (let i = 0; i < count; i++) {
     out.push({
@@ -22,8 +187,16 @@ function makeStars(count: number, width: number, height: number): { x: number; y
 
 function makeClouds(
   width: number,
-  height: number
-): { x: number; y: number; w: number; h: number; color: string; speed: number; seed: number }[][] {
+  height: number,
+): {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  color: string;
+  speed: number;
+  seed: number;
+}[][] {
   const layers = [
     { count: 4, yBase: 0.25, size: 80, speed: 28 },
     { count: 5, yBase: 0.45, size: 120, speed: 18 },
@@ -31,7 +204,15 @@ function makeClouds(
     { count: 3, yBase: 0.8, size: 140, speed: 6 },
   ];
   return layers.map((layer, li) => {
-    const clouds: { x: number; y: number; w: number; h: number; color: string; speed: number; seed: number }[] = [];
+    const clouds: {
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      color: string;
+      speed: number;
+      seed: number;
+    }[] = [];
     for (let i = 0; i < layer.count; i++) {
       const s = li * 100 + i * 17 + width * 0.001;
       clouds.push({
@@ -48,7 +229,19 @@ function makeClouds(
   });
 }
 
-export function GameSkyBackground() {
+interface GameSkyBackgroundProps {
+  variant?: "full" | "minimal";
+  moon?: boolean;
+  birds?: boolean;
+  dogs?: boolean;
+}
+
+export function GameSkyBackground({
+  variant = "full",
+  moon = true,
+  birds: showBirds = false,
+  dogs: showDogs = false,
+}: GameSkyBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -61,7 +254,33 @@ export function GameSkyBackground() {
     let raf = 0;
     let lastTime = 0;
     let stars: { x: number; y: number; r: number; twinkle: number }[] = [];
-    let cloudLayers: { x: number; y: number; w: number; h: number; color: string; speed: number; seed: number }[][] = [];
+    let cloudLayers: {
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      color: string;
+      speed: number;
+      seed: number;
+    }[][] = [];
+    let birdList: {
+      x: number;
+      y: number;
+      speed: number;
+      wingPhase: number;
+      size: number;
+      seed: number;
+      right: boolean;
+    }[] = [];
+    let dogList: {
+      x: number;
+      y: number;
+      speed: number;
+      runPhase: number;
+      size: number;
+      seed: number;
+      right: boolean;
+    }[] = [];
 
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio, 2);
@@ -74,14 +293,32 @@ export function GameSkyBackground() {
       canvas.style.width = `${w}px`;
       canvas.style.height = `${h}px`;
       stars = makeStars(80, w, h);
-      cloudLayers = makeClouds(w, h);
+      cloudLayers = variant === "full" ? makeClouds(w, h) : [];
+      if (showBirds) {
+        const raw = makeBirds(15, w, h);
+        birdList = raw.map((b) => ({ ...b, right: Math.random() > 0.5 }));
+      } else {
+        birdList = [];
+      }
+      if (showDogs) {
+        dogList = makeDogs(10, w, h);
+      } else {
+        dogList = [];
+      }
     };
 
     const seed = (s: number) => {
       const x = Math.sin(s * 12.9898) * 43758.5453;
       return x - Math.floor(x);
     };
-    const drawPixelCloud = (cx: number, cy: number, w: number, h: number, color: string, cloudSeed: number) => {
+    const drawPixelCloud = (
+      cx: number,
+      cy: number,
+      w: number,
+      h: number,
+      color: string,
+      cloudSeed: number,
+    ) => {
       const step = 10;
       ctx.fillStyle = color;
       for (let px = 0; px < w; px += step) {
@@ -129,27 +366,51 @@ export function GameSkyBackground() {
         ctx.fill();
       });
 
-      const moonX = w * 0.78;
-      const moonY = h * 0.2;
-      const moonR = Math.min(w, h) * 0.12;
-      ctx.fillStyle = MOON_GLOW;
-      for (let i = 3; i >= 1; i--) {
+      if (moon) {
+        const moonX = w * 0.78;
+        const moonY = h * 0.2;
+        const moonR = Math.min(w, h) * 0.12;
+        ctx.fillStyle = MOON_GLOW;
+        for (let i = 3; i >= 1; i--) {
+          ctx.beginPath();
+          ctx.arc(moonX, moonY, moonR + i * 18, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = MOON_COLOR;
         ctx.beginPath();
-        ctx.arc(moonX, moonY, moonR + i * 18, 0, Math.PI * 2);
+        ctx.arc(moonX, moonY, moonR, 0, Math.PI * 2);
         ctx.fill();
       }
-      ctx.fillStyle = MOON_COLOR;
-      ctx.beginPath();
-      ctx.arc(moonX, moonY, moonR, 0, Math.PI * 2);
-      ctx.fill();
 
-      cloudLayers.forEach((layer) => {
-        layer.forEach((c) => {
-          c.x += c.speed * dt;
-          if (c.x > w + c.w) c.x = -c.w - 40;
-          drawPixelCloud(c.x, c.y, c.w, c.h, c.color, c.seed);
+      if (variant === "full") {
+        cloudLayers.forEach((layer) => {
+          layer.forEach((c) => {
+            c.x += c.speed * dt;
+            if (c.x > w + c.w) c.x = -c.w - 40;
+            drawPixelCloud(c.x, c.y, c.w, c.h, c.color, c.seed);
+          });
         });
-      });
+      }
+
+      if (showBirds && birdList.length > 0) {
+        birdList.forEach((b) => {
+          b.x += (b.right ? 1 : -1) * b.speed * dt;
+          b.wingPhase += dt * 6;
+          if (b.right && b.x > w + 30) b.x = -30;
+          if (!b.right && b.x < -30) b.x = w + 30;
+          drawBird(ctx, b.x, b.y, b.wingPhase, b.size, b.right);
+        });
+      }
+
+      if (showDogs && dogList.length > 0) {
+        dogList.forEach((d) => {
+          d.x += (d.right ? 1 : -1) * d.speed * dt;
+          d.runPhase += dt * 10;
+          if (d.right && d.x > w + 50) d.x = -50;
+          if (!d.right && d.x < -50) d.x = w + 50;
+          drawDog(ctx, d.x, d.y, d.runPhase, d.size, d.right);
+        });
+      }
 
       raf = requestAnimationFrame(animate);
     };
@@ -162,7 +423,7 @@ export function GameSkyBackground() {
       window.removeEventListener("resize", resize);
       cancelAnimationFrame(raf);
     };
-  }, []);
+  }, [variant, moon, showBirds, showDogs]);
 
   return (
     <canvas

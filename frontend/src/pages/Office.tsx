@@ -42,11 +42,16 @@ interface OtherUser {
 
 function directionToAngle(d: Direction): number {
   switch (d) {
-    case "up": return 0;
-    case "right": return -Math.PI / 2;
-    case "down": return Math.PI;
-    case "left": return Math.PI / 2;
-    default: return 0;
+    case "up":
+      return 0;
+    case "right":
+      return -Math.PI / 2;
+    case "down":
+      return Math.PI;
+    case "left":
+      return Math.PI / 2;
+    default:
+      return 0;
   }
 }
 
@@ -73,7 +78,11 @@ function isInMeetingZone(x: number, z: number): { roomId: string } | null {
   return null;
 }
 
-function checkCollision(x: number, z: number, radius: number): { x: number; z: number } {
+function checkCollision(
+  x: number,
+  z: number,
+  radius: number,
+): { x: number; z: number } {
   let outX = x;
   let outZ = z;
   const margin = radius + 0.1;
@@ -81,8 +90,8 @@ function checkCollision(x: number, z: number, radius: number): { x: number; z: n
     const dx = Math.abs(x - cx);
     const dz = Math.abs(z - cz);
     if (dx < hw + margin && dz < hd + margin) {
-      const px = (hw + margin) - dx;
-      const pz = (hd + margin) - dz;
+      const px = hw + margin - dx;
+      const pz = hd + margin - dz;
       if (px < pz) outX = outX > cx ? cx + hw + margin : cx - hw - margin;
       else outZ = outZ > cz ? cz + hd + margin : cz - hd - margin;
     }
@@ -115,7 +124,7 @@ function createCharacterMesh(color: number, isSelf: boolean): THREE.Group {
 }
 
 function useKeyboardMovement(
-  onMove: (x: number, z: number, direction: Direction) => void
+  onMove: (x: number, z: number, direction: Direction) => void,
 ) {
   const keys = useRef({ w: false, a: false, s: false, d: false });
   const lastSend = useRef(0);
@@ -220,7 +229,11 @@ export default function Office() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const state = location.state as { orgId?: string; spaceId?: string; spaceName?: string } | null;
+  const state = location.state as {
+    orgId?: string;
+    spaceId?: string;
+    spaceName?: string;
+  } | null;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -229,7 +242,9 @@ export default function Office() {
   const othersGroupsRef = useRef<Map<string, THREE.Group>>(new Map());
   const [others, setOthers] = useState<Map<string, OtherUser>>(new Map());
   const othersRef = useRef<Map<string, OtherUser>>(new Map());
-  const othersTargetPosRef = useRef<Map<string, { x: number; z: number }>>(new Map());
+  const othersTargetPosRef = useRef<Map<string, { x: number; z: number }>>(
+    new Map(),
+  );
   const socketRef = useRef<Socket | null>(null);
   const spaceIdRef = useRef<string | null>(null);
   const myPosRef = useRef({ x: 0, z: 0 });
@@ -242,13 +257,17 @@ export default function Office() {
   const lastPointerRef = useRef({ x: 0, y: 0 });
 
   const [spaceMessages, setSpaceMessages] = useState<ChatMessagePayload[]>([]);
-  const [dmMessagesByUser, setDmMessagesByUser] = useState<Map<string, ChatMessagePayload[]>>(new Map());
+  const [dmMessagesByUser, setDmMessagesByUser] = useState<
+    Map<string, ChatMessagePayload[]>
+  >(new Map());
   const [chatOpen, setChatOpen] = useState(false);
   const [chatTab, setChatTab] = useState<"space" | "dm">("space");
   const [dmWithUserId, setDmWithUserId] = useState<string | null>(null);
   const chatListRef = useRef<HTMLDivElement>(null);
 
-  const [meetingZone, setMeetingZone] = useState<{ roomId: string } | null>(null);
+  const [meetingZone, setMeetingZone] = useState<{ roomId: string } | null>(
+    null,
+  );
   const [inCall, setInCall] = useState(false);
   const [callError, setCallError] = useState<string | null>(null);
   const [dyteToken, setDyteToken] = useState<string | null>(null);
@@ -281,7 +300,8 @@ export default function Office() {
   useKeyboardMovement(emitMove);
 
   useEffect(() => {
-    if (!state?.spaceId || !state?.spaceName || !canvasRef.current || !user) return;
+    if (!state?.spaceId || !state?.spaceName || !canvasRef.current || !user)
+      return;
 
     const token = getStoredToken();
     if (!token) {
@@ -315,7 +335,9 @@ export default function Office() {
       });
       othersRef.current = map;
       setOthers(map);
-      map.forEach((u, id) => othersTargetPosRef.current.set(id, { x: u.x, z: u.z }));
+      map.forEach((u, id) =>
+        othersTargetPosRef.current.set(id, { x: u.x, z: u.z }),
+      );
     });
 
     socket.on("user_joined", (u: OtherUser) => {
@@ -339,18 +361,34 @@ export default function Office() {
       });
     });
 
-    socket.on("user_moved", (data: { userId: string; socketId: string; x: number; y: number; z: number; direction: string }) => {
-      if (data.socketId === socket.id) return;
-      othersTargetPosRef.current.set(data.socketId, { x: data.x, z: data.z });
-      setOthers((prev) => {
-        const u = prev.get(data.socketId);
-        if (!u) return prev;
-        const next = new Map(prev);
-        next.set(data.socketId, { ...u, x: data.x, y: data.y ?? 0, z: data.z, direction: data.direction });
-        othersRef.current = next;
-        return next;
-      });
-    });
+    socket.on(
+      "user_moved",
+      (data: {
+        userId: string;
+        socketId: string;
+        x: number;
+        y: number;
+        z: number;
+        direction: string;
+      }) => {
+        if (data.socketId === socket.id) return;
+        othersTargetPosRef.current.set(data.socketId, { x: data.x, z: data.z });
+        setOthers((prev) => {
+          const u = prev.get(data.socketId);
+          if (!u) return prev;
+          const next = new Map(prev);
+          next.set(data.socketId, {
+            ...u,
+            x: data.x,
+            y: data.y ?? 0,
+            z: data.z,
+            direction: data.direction,
+          });
+          othersRef.current = next;
+          return next;
+        });
+      },
+    );
 
     socket.on("chat_message", (msg: ChatMessagePayload) => {
       if (msg.channelType === "SPACE" && msg.channelId === state.spaceId) {
@@ -380,7 +418,9 @@ export default function Office() {
   useEffect(() => {
     if (!state?.spaceId) return;
     api
-      .get<{ messages: ChatMessagePayload[] }>(`/spaces/${state.spaceId}/messages`)
+      .get<{ messages: ChatMessagePayload[] }>(
+        `/spaces/${state.spaceId}/messages`,
+      )
       .then((res) => setSpaceMessages(res.data.messages ?? []))
       .catch(() => setSpaceMessages([]));
   }, [state?.spaceId]);
@@ -391,13 +431,15 @@ export default function Office() {
     if (dmWithUserId) {
       socket.emit("join_dm", { otherUserId: dmWithUserId });
       api
-        .get<{ messages: ChatMessagePayload[] }>(`/dms/${dmWithUserId}/messages`)
+        .get<{ messages: ChatMessagePayload[] }>(
+          `/dms/${dmWithUserId}/messages`,
+        )
         .then((res) =>
           setDmMessagesByUser((prev) => {
             const next = new Map(prev);
             next.set(dmWithUserId, res.data.messages ?? []);
             return next;
-          })
+          }),
         )
         .catch(() => {});
     }
@@ -408,7 +450,10 @@ export default function Office() {
 
   useEffect(() => {
     if (!chatOpen) return;
-    chatListRef.current?.scrollTo({ top: chatListRef.current.scrollHeight, behavior: "smooth" });
+    chatListRef.current?.scrollTo({
+      top: chatListRef.current.scrollHeight,
+      behavior: "smooth",
+    });
   }, [chatOpen, spaceMessages, dmMessagesByUser, dmWithUserId]);
 
   const sendMessage = useCallback(
@@ -419,29 +464,47 @@ export default function Office() {
       const spaceId = spaceIdRef.current;
       if (!socket || !spaceId) return;
       if (chatTab === "space") {
-        socket.emit("chat_message", { channelType: "SPACE", channelId: spaceId, content: trimmed });
+        socket.emit("chat_message", {
+          channelType: "SPACE",
+          channelId: spaceId,
+          content: trimmed,
+        });
       } else if (chatTab === "dm" && dmWithUserId) {
-        socket.emit("chat_message", { channelType: "DM", channelId: dmWithUserId, content: trimmed });
+        socket.emit("chat_message", {
+          channelType: "DM",
+          channelId: dmWithUserId,
+          content: trimmed,
+        });
       }
     },
-    [chatTab, dmWithUserId]
+    [chatTab, dmWithUserId],
   );
 
-  const joinMeetingWithRoom = useCallback(async (roomId: string) => {
-    if (!state?.spaceId || inCall) return;
-    setCallError(null);
-    try {
-      const { data } = await api.post<{ token: string; meetingId: string }>("/media/rooms", {
-        spaceId: state.spaceId,
-        roomId,
-      });
-      setDyteToken(data.token);
-      setInCall(true);
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string; code?: string } } })?.response?.data?.error ?? (err as Error)?.message ?? "Failed to join call";
-      setCallError(msg);
-    }
-  }, [state?.spaceId, inCall]);
+  const joinMeetingWithRoom = useCallback(
+    async (roomId: string) => {
+      if (!state?.spaceId || inCall) return;
+      setCallError(null);
+      try {
+        const { data } = await api.post<{ token: string; meetingId: string }>(
+          "/media/rooms",
+          {
+            spaceId: state.spaceId,
+            roomId,
+          },
+        );
+        setDyteToken(data.token);
+        setInCall(true);
+      } catch (err: unknown) {
+        const msg =
+          (err as { response?: { data?: { error?: string; code?: string } } })
+            ?.response?.data?.error ??
+          (err as Error)?.message ??
+          "Failed to join call";
+        setCallError(msg);
+      }
+    },
+    [state?.spaceId, inCall],
+  );
 
   const joinMeeting = useCallback(async () => {
     if (meetingZone && !inCall) joinMeetingWithRoom(meetingZone.roomId);
@@ -464,7 +527,6 @@ export default function Office() {
     return () => window.removeEventListener("keydown", onKey);
   }, [meetingZone, inCall, joinMeeting]);
 
-
   useEffect(() => {
     if (!canvasRef.current || !state?.spaceId) return;
 
@@ -477,8 +539,14 @@ export default function Office() {
     camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
 
-    const renderer = new THREE.WebGLRenderer({ canvas: canvasRef.current, antialias: true });
-    renderer.setSize(canvasRef.current.clientWidth, canvasRef.current.clientHeight);
+    const renderer = new THREE.WebGLRenderer({
+      canvas: canvasRef.current,
+      antialias: true,
+    });
+    renderer.setSize(
+      canvasRef.current.clientWidth,
+      canvasRef.current.clientHeight,
+    );
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -511,17 +579,22 @@ export default function Office() {
     floor.receiveShadow = true;
     scene.add(floor);
 
-    const gridHelper = new THREE.GridHelper(FLOOR_W, GRID_SIZE, 0x334155, 0x334155);
+    const gridHelper = new THREE.GridHelper(
+      FLOOR_W,
+      GRID_SIZE,
+      0x334155,
+      0x334155,
+    );
     gridHelper.position.y = 0.02;
     scene.add(gridHelper);
 
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.8 });
+    const wallMat = new THREE.MeshStandardMaterial({
+      color: 0x475569,
+      roughness: 0.8,
+    });
     const wallGeo = new THREE.BoxGeometry(1, WALL_H, 1);
     const addWall = (x: number, z: number, w: number, d: number) => {
-      const mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(w, WALL_H, d),
-        wallMat
-      );
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, WALL_H, d), wallMat);
       mesh.position.set(x, WALL_H / 2, z);
       mesh.receiveShadow = true;
       mesh.castShadow = true;
@@ -534,11 +607,14 @@ export default function Office() {
     addWall(-hw, 0, 1, FLOOR_D + 2);
     addWall(hw, 0, 1, FLOOR_D + 2);
 
-    const deskMat = new THREE.MeshStandardMaterial({ color: 0x78716c, roughness: 0.7 });
+    const deskMat = new THREE.MeshStandardMaterial({
+      color: 0x78716c,
+      roughness: 0.7,
+    });
     DESKS.forEach(([cx, cz, hw, hd]) => {
       const desk = new THREE.Mesh(
         new THREE.BoxGeometry(hw * 2, 1, hd * 2),
-        deskMat
+        deskMat,
       );
       desk.position.set(cx, 0.5, cz);
       desk.castShadow = true;
@@ -560,7 +636,7 @@ export default function Office() {
       });
       const zoneFloor = new THREE.Mesh(
         new THREE.PlaneGeometry(hw * 2, hd * 2),
-        zoneMat
+        zoneMat,
       );
       zoneFloor.rotation.x = -Math.PI / 2;
       zoneFloor.position.set(cx, 0.02, cz);
@@ -576,7 +652,10 @@ export default function Office() {
         cameraAngleHRef.current -= e.deltaX * 0.008;
       } else {
         const delta = e.deltaY > 0 ? 1.5 : -1.5;
-        cameraDistanceRef.current = Math.max(6, Math.min(40, cameraDistanceRef.current + delta));
+        cameraDistanceRef.current = Math.max(
+          6,
+          Math.min(40, cameraDistanceRef.current + delta),
+        );
       }
     };
     const onPointerDown = (e: PointerEvent) => {
@@ -588,7 +667,10 @@ export default function Office() {
       const dx = (e.clientX - lastPointerRef.current.x) * 0.01;
       const dy = (e.clientY - lastPointerRef.current.y) * 0.01;
       cameraAngleHRef.current -= dx;
-      cameraAngleVRef.current = Math.max(0.15, Math.min(1.2, cameraAngleVRef.current + dy));
+      cameraAngleVRef.current = Math.max(
+        0.15,
+        Math.min(1.2, cameraAngleVRef.current + dy),
+      );
       lastPointerRef.current = { x: e.clientX, y: e.clientY };
     };
     const onPointerUp = (e: PointerEvent) => {
@@ -626,8 +708,10 @@ export default function Office() {
         selfGroupRef.current.rotation.y = directionToAngle(dir);
       }
 
-      cameraTargetRef.current.x += (x - cameraTargetRef.current.x) * CAMERA_FOLLOW_LERP;
-      cameraTargetRef.current.z += (z - cameraTargetRef.current.z) * CAMERA_FOLLOW_LERP;
+      cameraTargetRef.current.x +=
+        (x - cameraTargetRef.current.x) * CAMERA_FOLLOW_LERP;
+      cameraTargetRef.current.z +=
+        (z - cameraTargetRef.current.z) * CAMERA_FOLLOW_LERP;
       const dist = cameraDistanceRef.current;
       const ah = cameraAngleHRef.current;
       const av = cameraAngleVRef.current;
@@ -638,9 +722,13 @@ export default function Office() {
         cameraRef.current.position.set(
           cameraTargetRef.current.x + ox,
           oy,
-          cameraTargetRef.current.z + oz
+          cameraTargetRef.current.z + oz,
         );
-        cameraRef.current.lookAt(cameraTargetRef.current.x, 0, cameraTargetRef.current.z);
+        cameraRef.current.lookAt(
+          cameraTargetRef.current.x,
+          0,
+          cameraTargetRef.current.z,
+        );
       }
 
       const currentOthers = othersRef.current;
@@ -651,9 +739,14 @@ export default function Office() {
           return;
         }
         group.visible = true;
-        let target = othersTargetPosRef.current.get(socketId) ?? { x: u.x, z: u.z };
-        const gx = group.position.x + (target.x - group.position.x) * OTHERS_LERP;
-        const gz = group.position.z + (target.z - group.position.z) * OTHERS_LERP;
+        let target = othersTargetPosRef.current.get(socketId) ?? {
+          x: u.x,
+          z: u.z,
+        };
+        const gx =
+          group.position.x + (target.x - group.position.x) * OTHERS_LERP;
+        const gz =
+          group.position.z + (target.z - group.position.z) * OTHERS_LERP;
         group.position.set(gx, 0, gz);
         group.rotation.y = directionToAngle(u.direction as Direction);
       });
@@ -676,7 +769,8 @@ export default function Office() {
         g.traverse((c) => {
           if (c instanceof THREE.Mesh) {
             c.geometry?.dispose();
-            if (Array.isArray(c.material)) c.material.forEach((m) => m.dispose());
+            if (Array.isArray(c.material))
+              c.material.forEach((m) => m.dispose());
             else c.material?.dispose();
           }
         });
@@ -710,7 +804,8 @@ export default function Office() {
         group.traverse((c) => {
           if (c instanceof THREE.Mesh) {
             c.geometry?.dispose();
-            if (Array.isArray(c.material)) c.material.forEach((m) => m.dispose());
+            if (Array.isArray(c.material))
+              c.material.forEach((m) => m.dispose());
             else c.material?.dispose();
           }
         });
@@ -757,14 +852,20 @@ export default function Office() {
                     <button
                       type="button"
                       className="px-3 py-2 text-left text-sm hover:bg-muted"
-                      onClick={() => { joinMeetingWithRoom("room1"); setVideoMenuOpen(false); }}
+                      onClick={() => {
+                        joinMeetingWithRoom("room1");
+                        setVideoMenuOpen(false);
+                      }}
                     >
                       Join Room 1
                     </button>
                     <button
                       type="button"
                       className="px-3 py-2 text-left text-sm hover:bg-muted"
-                      onClick={() => { joinMeetingWithRoom("room2"); setVideoMenuOpen(false); }}
+                      onClick={() => {
+                        joinMeetingWithRoom("room2");
+                        setVideoMenuOpen(false);
+                      }}
                     >
                       Join Room 2
                     </button>
@@ -779,10 +880,16 @@ export default function Office() {
               )}
             </div>
           )}
-          <Link to="/" className="text-primary underline-offset-4 hover:underline">
+          <Link
+            to="/"
+            className="text-primary underline-offset-4 hover:underline"
+          >
             Home
           </Link>
-          <Link to="/dashboard" className="text-primary underline-offset-4 hover:underline">
+          <Link
+            to="/dashboard"
+            className="text-primary underline-offset-4 hover:underline"
+          >
             Dashboard
           </Link>
         </nav>
@@ -795,11 +902,18 @@ export default function Office() {
         />
         <div className="absolute bottom-4 left-4 flex flex-col gap-2">
           <div className="rounded-lg border border-white/20 bg-black/70 px-4 py-2 font-mono text-sm text-white shadow-lg">
-            <span className="text-emerald-400">WASD</span> or <span className="text-emerald-400">↑↓←→</span> move · <span className="text-sky-300">Scroll</span> zoom · <span className="text-sky-300">Right-drag or trackpad swipe</span> orbit
+            <span className="text-emerald-400">WASD</span> or{" "}
+            <span className="text-emerald-400">↑↓←→</span> move ·{" "}
+            <span className="text-sky-300">Scroll</span> zoom ·{" "}
+            <span className="text-sky-300">Right-drag or trackpad swipe</span>{" "}
+            orbit
           </div>
           {!inCall && (
             <p className="text-xs text-white/80">
-              <span className="font-medium text-blue-300">Blue zones</span> = meeting rooms · Or use <span className="font-medium text-blue-300">Video call</span> in header
+              <span className="font-medium text-blue-300">Blue zones</span> =
+              meeting rooms · Or use{" "}
+              <span className="font-medium text-blue-300">Video call</span> in
+              header
             </p>
           )}
         </div>
@@ -813,7 +927,9 @@ export default function Office() {
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">Or press E</p>
-            {callError && <p className="text-xs text-destructive">{callError}</p>}
+            {callError && (
+              <p className="text-xs text-destructive">{callError}</p>
+            )}
           </div>
         )}
 
@@ -859,8 +975,14 @@ export default function Office() {
                     className="flex max-h-64 flex-col gap-1 overflow-y-auto p-2"
                   >
                     {spaceMessages.map((m) => (
-                      <div key={m.id} className="rounded bg-muted/50 px-2 py-1 text-sm">
-                        <span className="font-medium text-muted-foreground">{m.senderDisplayName}:</span> {m.content}
+                      <div
+                        key={m.id}
+                        className="rounded bg-muted/50 px-2 py-1 text-sm"
+                      >
+                        <span className="font-medium text-muted-foreground">
+                          {m.senderDisplayName}:
+                        </span>{" "}
+                        {m.content}
                       </div>
                     ))}
                   </div>
@@ -868,15 +990,25 @@ export default function Office() {
                     className="flex gap-2 border-t border-border p-2"
                     onSubmit={(e) => {
                       e.preventDefault();
-                      const input = e.currentTarget.querySelector<HTMLInputElement>("input[name=chat]");
+                      const input =
+                        e.currentTarget.querySelector<HTMLInputElement>(
+                          "input[name=chat]",
+                        );
                       if (input) {
                         sendMessage(input.value);
                         input.value = "";
                       }
                     }}
                   >
-                    <Input name="chat" placeholder="Message space..." className="flex-1" maxLength={2000} />
-                    <Button type="submit" size="sm">Send</Button>
+                    <Input
+                      name="chat"
+                      placeholder="Message space..."
+                      className="flex-1"
+                      maxLength={2000}
+                    />
+                    <Button type="submit" size="sm">
+                      Send
+                    </Button>
                   </form>
                 </>
               )}
@@ -884,7 +1016,9 @@ export default function Office() {
                 <>
                   {!dmWithUserId ? (
                     <div className="max-h-64 overflow-y-auto p-2">
-                      <p className="mb-2 text-xs text-muted-foreground">Start a conversation</p>
+                      <p className="mb-2 text-xs text-muted-foreground">
+                        Start a conversation
+                      </p>
                       {Array.from(others.values()).map((u) => (
                         <button
                           key={u.userId}
@@ -895,7 +1029,11 @@ export default function Office() {
                           {u.displayName}
                         </button>
                       ))}
-                      {others.size === 0 && <p className="text-sm text-muted-foreground">No one else in space yet.</p>}
+                      {others.size === 0 && (
+                        <p className="text-sm text-muted-foreground">
+                          No one else in space yet.
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <>
@@ -908,7 +1046,9 @@ export default function Office() {
                           ← Back
                         </button>
                         <span className="text-sm font-medium">
-                          {Array.from(others.values()).find((o) => o.userId === dmWithUserId)?.displayName ?? "User"}
+                          {Array.from(others.values()).find(
+                            (o) => o.userId === dmWithUserId,
+                          )?.displayName ?? "User"}
                         </span>
                       </div>
                       <div
@@ -916,8 +1056,14 @@ export default function Office() {
                         className="flex max-h-64 flex-col gap-1 overflow-y-auto p-2"
                       >
                         {(dmMessagesByUser.get(dmWithUserId) ?? []).map((m) => (
-                          <div key={m.id} className="rounded bg-muted/50 px-2 py-1 text-sm">
-                            <span className="font-medium text-muted-foreground">{m.senderDisplayName}:</span> {m.content}
+                          <div
+                            key={m.id}
+                            className="rounded bg-muted/50 px-2 py-1 text-sm"
+                          >
+                            <span className="font-medium text-muted-foreground">
+                              {m.senderDisplayName}:
+                            </span>{" "}
+                            {m.content}
                           </div>
                         ))}
                       </div>
@@ -925,15 +1071,25 @@ export default function Office() {
                         className="flex gap-2 border-t border-border p-2"
                         onSubmit={(e) => {
                           e.preventDefault();
-                          const input = e.currentTarget.querySelector<HTMLInputElement>("input[name=dm]");
+                          const input =
+                            e.currentTarget.querySelector<HTMLInputElement>(
+                              "input[name=dm]",
+                            );
                           if (input) {
                             sendMessage(input.value);
                             input.value = "";
                           }
                         }}
                       >
-                        <Input name="dm" placeholder="Message..." className="flex-1" maxLength={2000} />
-                        <Button type="submit" size="sm">Send</Button>
+                        <Input
+                          name="dm"
+                          placeholder="Message..."
+                          className="flex-1"
+                          maxLength={2000}
+                        />
+                        <Button type="submit" size="sm">
+                          Send
+                        </Button>
                       </form>
                     </>
                   )}

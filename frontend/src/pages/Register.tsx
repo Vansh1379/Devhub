@@ -23,7 +23,7 @@ export default function Register() {
     setSubmitting(true);
     try {
       await register(email, password, displayName);
-      navigate("/dashboard", { replace: true });
+      navigate("/", { replace: true });
     } catch {
       // error set in context
     } finally {

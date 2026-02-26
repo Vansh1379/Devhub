@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { GameSkyBackground } from "@/components/GameSkyBackground";
 
 interface Space {
   id: string;
@@ -38,37 +39,37 @@ export default function SpaceSelect() {
     });
   };
 
+  const cardClass =
+    "bg-[#0f0e1a]/70 backdrop-blur-md border-white/10 shadow-2xl shadow-black/30 text-gray-100";
+  const linkClass = "text-sky-300 underline-offset-4 hover:underline";
+
   if (!orgId) {
     return (
-      <div className="p-6">
-        <p className="text-muted-foreground">Missing organization.</p>
-        <Link
-          to="/dashboard"
-          className="mt-2 inline-block text-primary underline-offset-4 hover:underline"
-        >
-          Back to Dashboard
-        </Link>
+      <div className="relative min-h-screen">
+        <GameSkyBackground variant="minimal" moon={false} />
+        <div className="relative z-10 flex min-h-screen flex-col items-center justify-center gap-6 px-6 py-12">
+          <h1 className="text-2xl font-bold tracking-tight">
+            <span className="text-white">Dev</span>
+            <span className="text-[#ff9900]">hub</span>
+          </h1>
+          <div className="rounded-lg border border-white/10 bg-[#0f0e1a]/70 px-6 py-5 backdrop-blur-md">
+            <p className="text-gray-400">Missing organization.</p>
+            <Link to="/dashboard" className={`mt-3 inline-block text-sm ${linkClass}`}>
+              Back to Dashboard
+            </Link>
+          </div>
+        </div>
       </div>
     );
   }
 
   if (loading) {
     return (
-      <div className="flex min-h-[40vh] items-center justify-center p-6">
-        <p className="text-muted-foreground">Loading spaces…</p>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="p-6">
-        <p className="text-muted-foreground">
-          {error}.{" "}
-          <Link to="/dashboard" className="text-primary underline-offset-4 hover:underline">
-            Dashboard
-          </Link>
-        </p>
+      <div className="relative min-h-screen">
+        <GameSkyBackground variant="minimal" moon={false} />
+        <div className="relative z-10 flex min-h-screen items-center justify-center p-6">
+          <p className="text-gray-400">Loading spaces…</p>
+        </div>
       </div>
     );
   }
@@ -93,68 +94,82 @@ export default function SpaceSelect() {
 
   if (spaces.length === 0) {
     return (
-      <div className="mx-auto max-w-md px-4 py-8">
-        <Card>
-          <CardHeader>
-            <CardTitle>No spaces yet</CardTitle>
-            <CardDescription>
-              This organization doesn&apos;t have a space yet. Create one to enter the virtual office.
+      <div className="relative min-h-screen">
+        <GameSkyBackground variant="minimal" moon={false} />
+        <div className="relative z-10 flex min-h-screen w-full flex-col items-center justify-center gap-6 px-6 py-12">
+          <h1 className="text-2xl font-bold tracking-tight">
+            <span className="text-white">Dev</span>
+            <span className="text-[#ff9900]">hub</span>
+          </h1>
+          <Card className={`w-full max-w-sm ${cardClass}`}>
+            <CardHeader className="text-center">
+              <CardTitle className="text-white">No spaces yet</CardTitle>
+              <CardDescription className="text-gray-400">
+                This organization doesn&apos;t have a space yet. Create one to enter the virtual office.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {error && (
+                <p className="text-sm text-amber-300">{error}</p>
+              )}
+              <Button
+                className="w-full"
+                onClick={createFirstSpace}
+                disabled={creating}
+              >
+                {creating ? "Creating…" : "Create Main Office"}
+              </Button>
+              <Link
+                to="/dashboard"
+                className={`mt-4 block text-center text-sm ${linkClass}`}
+              >
+                Back to Dashboard
+              </Link>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative min-h-screen">
+      <GameSkyBackground variant="minimal" moon={false} />
+      <div className="relative z-10 flex min-h-screen w-full flex-col items-center justify-center gap-6 px-6 py-12">
+        <h1 className="text-2xl font-bold tracking-tight">
+          <span className="text-white">Dev</span>
+          <span className="text-[#ff9900]">hub</span>
+        </h1>
+        <Card className={`w-full max-w-sm ${cardClass}`}>
+          <CardHeader className="text-center">
+            <CardTitle className="text-white">Select a space</CardTitle>
+            <CardDescription className="text-gray-400">
+              Choose where to go in the virtual office.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {error && (
-              <p className="text-sm text-destructive">{error}</p>
-            )}
-            <Button
-              className="w-full"
-              onClick={createFirstSpace}
-              disabled={creating}
-            >
-              {creating ? "Creating…" : "Create Main Office"}
-            </Button>
+            {spaces.map((space) => (
+              <Button
+                key={space.id}
+                variant="outline"
+                className="h-auto w-full justify-start border-white/20 bg-white/10 py-4 text-left font-normal text-white hover:bg-white/20"
+                onClick={() => enterSpace(space)}
+              >
+                {space.name}
+                {space.isDefault && (
+                  <span className="ml-2 text-gray-400">(default)</span>
+                )}
+              </Button>
+            ))}
             <Link
               to="/dashboard"
-              className="mt-4 block text-center text-sm text-primary underline-offset-4 hover:underline"
+              className={`mt-4 block text-center text-sm ${linkClass}`}
             >
               Back to Dashboard
             </Link>
           </CardContent>
         </Card>
       </div>
-    );
-  }
-
-  return (
-    <div className="mx-auto max-w-md px-4 py-8">
-      <Card>
-        <CardHeader>
-          <CardTitle>Select a space</CardTitle>
-          <CardDescription>
-            Choose where to go in the virtual office.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {spaces.map((space) => (
-            <Button
-              key={space.id}
-              variant="outline"
-              className="h-auto w-full justify-start py-4 text-left font-normal"
-              onClick={() => enterSpace(space)}
-            >
-              {space.name}
-              {space.isDefault && (
-                <span className="ml-2 text-muted-foreground">(default)</span>
-              )}
-            </Button>
-          ))}
-          <Link
-            to="/dashboard"
-            className="mt-4 block text-center text-sm text-primary underline-offset-4 hover:underline"
-          >
-            Back to Dashboard
-          </Link>
-        </CardContent>
-      </Card>
     </div>
   );
 }
