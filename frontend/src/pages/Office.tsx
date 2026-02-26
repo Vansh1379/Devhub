@@ -2,8 +2,21 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import * as THREE from "three";
 import { io, Socket } from "socket.io-client";
-import { getStoredToken } from "@/api";
+import { api, getStoredToken } from "@/api";
 import { useAuth } from "@/context/AuthContext";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { DyteCallView } from "@/components/DyteCallView";
+
+export interface ChatMessagePayload {
+  id: string;
+  channelType: "SPACE" | "DM";
+  channelId: string;
+  senderUserId: string;
+  senderDisplayName: string;
+  content: string;
+  createdAt: string;
+}
 
 const MOVE_THROTTLE_MS = 100;
 const GRID_SIZE = 24;
@@ -46,6 +59,19 @@ const DESKS: [number, number, number, number][] = [
   [-10, 2, 1.5, 2],
   [0, -12, 3, 1],
 ];
+
+// Meeting zones: [x, z, halfW, halfD, roomId]
+const MEETING_ZONES: [number, number, number, number, string][] = [
+  [-12, -10, 2.5, 1.5, "room1"],
+  [8, -8, 2.5, 1.5, "room2"],
+];
+
+function isInMeetingZone(x: number, z: number): { roomId: string } | null {
+  for (const [cx, cz, hw, hd, roomId] of MEETING_ZONES) {
+    if (Math.abs(x - cx) <= hw && Math.abs(z - cz) <= hd) return { roomId };
+  }
+  return null;
+}
 
 function checkCollision(x: number, z: number, radius: number): { x: number; z: number } {
   let outX = x;
@@ -209,7 +235,25 @@ export default function Office() {
   const myPosRef = useRef({ x: 0, z: 0 });
   const myDirRef = useRef<Direction>("down");
   const cameraTargetRef = useRef({ x: 0, z: 0 });
-  const cameraPosRef = useRef({ x: 0, z: 12, y: 8 });
+  const cameraDistanceRef = useRef(16);
+  const cameraAngleHRef = useRef(0);
+  const cameraAngleVRef = useRef(0.45);
+  const isPointerDownRef = useRef(false);
+  const lastPointerRef = useRef({ x: 0, y: 0 });
+
+  const [spaceMessages, setSpaceMessages] = useState<ChatMessagePayload[]>([]);
+  const [dmMessagesByUser, setDmMessagesByUser] = useState<Map<string, ChatMessagePayload[]>>(new Map());
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatTab, setChatTab] = useState<"space" | "dm">("space");
+  const [dmWithUserId, setDmWithUserId] = useState<string | null>(null);
+  const chatListRef = useRef<HTMLDivElement>(null);
+
+  const [meetingZone, setMeetingZone] = useState<{ roomId: string } | null>(null);
+  const [inCall, setInCall] = useState(false);
+  const [callError, setCallError] = useState<string | null>(null);
+  const [dyteToken, setDyteToken] = useState<string | null>(null);
+  const [videoMenuOpen, setVideoMenuOpen] = useState(false);
+  const lastMeetingZoneRef = useRef<string | null>(null);
 
   const hasSpace = state?.spaceId && state?.spaceName;
   useEffect(() => {
@@ -308,6 +352,23 @@ export default function Office() {
       });
     });
 
+    socket.on("chat_message", (msg: ChatMessagePayload) => {
+      if (msg.channelType === "SPACE" && msg.channelId === state.spaceId) {
+        setSpaceMessages((prev) => [...prev, msg]);
+      }
+      if (msg.channelType === "DM" && user?.id) {
+        const [id1, id2] = msg.channelId.split("_");
+        const peerId = id1 === user.id ? id2 : id1;
+        setDmMessagesByUser((prev) => {
+          const list = prev.get(peerId) ?? [];
+          if (list.some((m) => m.id === msg.id)) return prev;
+          const next = new Map(prev);
+          next.set(peerId, [...list, msg]);
+          return next;
+        });
+      }
+    });
+
     return () => {
       socket.emit("leave_space", { spaceId: state.spaceId });
       socket.disconnect();
@@ -315,6 +376,94 @@ export default function Office() {
       spaceIdRef.current = null;
     };
   }, [state?.spaceId, state?.spaceName, user, navigate]);
+
+  useEffect(() => {
+    if (!state?.spaceId) return;
+    api
+      .get<{ messages: ChatMessagePayload[] }>(`/spaces/${state.spaceId}/messages`)
+      .then((res) => setSpaceMessages(res.data.messages ?? []))
+      .catch(() => setSpaceMessages([]));
+  }, [state?.spaceId]);
+
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket || !user?.id) return;
+    if (dmWithUserId) {
+      socket.emit("join_dm", { otherUserId: dmWithUserId });
+      api
+        .get<{ messages: ChatMessagePayload[] }>(`/dms/${dmWithUserId}/messages`)
+        .then((res) =>
+          setDmMessagesByUser((prev) => {
+            const next = new Map(prev);
+            next.set(dmWithUserId, res.data.messages ?? []);
+            return next;
+          })
+        )
+        .catch(() => {});
+    }
+    return () => {
+      if (dmWithUserId) socket.emit("leave_dm", { otherUserId: dmWithUserId });
+    };
+  }, [dmWithUserId, user?.id]);
+
+  useEffect(() => {
+    if (!chatOpen) return;
+    chatListRef.current?.scrollTo({ top: chatListRef.current.scrollHeight, behavior: "smooth" });
+  }, [chatOpen, spaceMessages, dmMessagesByUser, dmWithUserId]);
+
+  const sendMessage = useCallback(
+    (content: string) => {
+      const trimmed = content.trim();
+      if (!trimmed) return;
+      const socket = socketRef.current;
+      const spaceId = spaceIdRef.current;
+      if (!socket || !spaceId) return;
+      if (chatTab === "space") {
+        socket.emit("chat_message", { channelType: "SPACE", channelId: spaceId, content: trimmed });
+      } else if (chatTab === "dm" && dmWithUserId) {
+        socket.emit("chat_message", { channelType: "DM", channelId: dmWithUserId, content: trimmed });
+      }
+    },
+    [chatTab, dmWithUserId]
+  );
+
+  const joinMeetingWithRoom = useCallback(async (roomId: string) => {
+    if (!state?.spaceId || inCall) return;
+    setCallError(null);
+    try {
+      const { data } = await api.post<{ token: string; meetingId: string }>("/media/rooms", {
+        spaceId: state.spaceId,
+        roomId,
+      });
+      setDyteToken(data.token);
+      setInCall(true);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string; code?: string } } })?.response?.data?.error ?? (err as Error)?.message ?? "Failed to join call";
+      setCallError(msg);
+    }
+  }, [state?.spaceId, inCall]);
+
+  const joinMeeting = useCallback(async () => {
+    if (meetingZone && !inCall) joinMeetingWithRoom(meetingZone.roomId);
+  }, [meetingZone, inCall, joinMeetingWithRoom]);
+
+  const leaveMeeting = useCallback(() => {
+    setDyteToken(null);
+    setInCall(false);
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "e" || meetingZone === null || inCall) return;
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+      e.preventDefault();
+      joinMeeting();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [meetingZone, inCall, joinMeeting]);
+
 
   useEffect(() => {
     if (!canvasRef.current || !state?.spaceId) return;
@@ -402,6 +551,55 @@ export default function Office() {
     scene.add(selfGroup);
     selfGroupRef.current = selfGroup;
 
+    MEETING_ZONES.forEach(([cx, cz, hw, hd]) => {
+      const zoneMat = new THREE.MeshStandardMaterial({
+        color: 0x2563eb,
+        transparent: true,
+        opacity: 0.35,
+        roughness: 0.9,
+      });
+      const zoneFloor = new THREE.Mesh(
+        new THREE.PlaneGeometry(hw * 2, hd * 2),
+        zoneMat
+      );
+      zoneFloor.rotation.x = -Math.PI / 2;
+      zoneFloor.position.set(cx, 0.02, cz);
+      scene.add(zoneFloor);
+    });
+
+    const canvas = canvasRef.current;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const absX = Math.abs(e.deltaX);
+      const absY = Math.abs(e.deltaY);
+      if (absX > absY) {
+        cameraAngleHRef.current -= e.deltaX * 0.008;
+      } else {
+        const delta = e.deltaY > 0 ? 1.5 : -1.5;
+        cameraDistanceRef.current = Math.max(6, Math.min(40, cameraDistanceRef.current + delta));
+      }
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.button === 2) isPointerDownRef.current = true;
+      lastPointerRef.current = { x: e.clientX, y: e.clientY };
+    };
+    const onPointerMove = (e: PointerEvent) => {
+      if (!isPointerDownRef.current) return;
+      const dx = (e.clientX - lastPointerRef.current.x) * 0.01;
+      const dy = (e.clientY - lastPointerRef.current.y) * 0.01;
+      cameraAngleHRef.current -= dx;
+      cameraAngleVRef.current = Math.max(0.15, Math.min(1.2, cameraAngleVRef.current + dy));
+      lastPointerRef.current = { x: e.clientX, y: e.clientY };
+    };
+    const onPointerUp = (e: PointerEvent) => {
+      if (e.button === 2) isPointerDownRef.current = false;
+    };
+    canvas?.addEventListener("wheel", onWheel, { passive: false });
+    canvas?.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    canvas?.addEventListener("contextmenu", (e) => e.preventDefault());
+
     const resize = () => {
       if (!canvasRef.current || !camera || !renderer) return;
       const w = canvasRef.current.clientWidth;
@@ -417,18 +615,31 @@ export default function Office() {
       raf = requestAnimationFrame(animate);
       const { x, z } = myPosRef.current;
       const dir = myDirRef.current;
+      const zone = isInMeetingZone(x, z);
+      if ((zone?.roomId ?? null) !== lastMeetingZoneRef.current) {
+        lastMeetingZoneRef.current = zone?.roomId ?? null;
+        setMeetingZone(zone);
+      }
 
       if (selfGroupRef.current) {
         selfGroupRef.current.position.set(x, 0, z);
         selfGroupRef.current.rotation.y = directionToAngle(dir);
       }
 
-      cameraTargetRef.current = { x, z };
-      cameraPosRef.current.x += (cameraTargetRef.current.x - cameraPosRef.current.x) * CAMERA_FOLLOW_LERP;
-      cameraPosRef.current.z += (cameraTargetRef.current.z + 12 - cameraPosRef.current.z) * CAMERA_FOLLOW_LERP;
-      cameraPosRef.current.y += (8 - cameraPosRef.current.y) * CAMERA_FOLLOW_LERP;
+      cameraTargetRef.current.x += (x - cameraTargetRef.current.x) * CAMERA_FOLLOW_LERP;
+      cameraTargetRef.current.z += (z - cameraTargetRef.current.z) * CAMERA_FOLLOW_LERP;
+      const dist = cameraDistanceRef.current;
+      const ah = cameraAngleHRef.current;
+      const av = cameraAngleVRef.current;
+      const ox = dist * Math.cos(av) * Math.sin(ah);
+      const oy = dist * Math.sin(av);
+      const oz = dist * Math.cos(av) * Math.cos(ah);
       if (cameraRef.current) {
-        cameraRef.current.position.set(cameraPosRef.current.x, cameraPosRef.current.y, cameraPosRef.current.z);
+        cameraRef.current.position.set(
+          cameraTargetRef.current.x + ox,
+          oy,
+          cameraTargetRef.current.z + oz
+        );
         cameraRef.current.lookAt(cameraTargetRef.current.x, 0, cameraTargetRef.current.z);
       }
 
@@ -454,6 +665,10 @@ export default function Office() {
     animate();
 
     return () => {
+      canvas?.removeEventListener("wheel", onWheel);
+      canvas?.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
       window.removeEventListener("resize", resize);
       cancelAnimationFrame(raf);
       othersGroupsRef.current.forEach((g) => {
@@ -526,7 +741,44 @@ export default function Office() {
         <h2 className="text-lg font-semibold tracking-tight">
           Office — {state.spaceName}
         </h2>
-        <nav className="flex gap-4">
+        <nav className="flex items-center gap-4">
+          {!inCall && (
+            <div className="relative">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setVideoMenuOpen((o) => !o)}
+              >
+                Video call
+              </Button>
+              {videoMenuOpen && (
+                <>
+                  <div className="absolute right-0 top-full z-20 mt-1 flex flex-col rounded-md border border-border bg-card py-1 shadow-lg">
+                    <button
+                      type="button"
+                      className="px-3 py-2 text-left text-sm hover:bg-muted"
+                      onClick={() => { joinMeetingWithRoom("room1"); setVideoMenuOpen(false); }}
+                    >
+                      Join Room 1
+                    </button>
+                    <button
+                      type="button"
+                      className="px-3 py-2 text-left text-sm hover:bg-muted"
+                      onClick={() => { joinMeetingWithRoom("room2"); setVideoMenuOpen(false); }}
+                    >
+                      Join Room 2
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    className="fixed inset-0 z-10"
+                    aria-label="Close menu"
+                    onClick={() => setVideoMenuOpen(false)}
+                  />
+                </>
+              )}
+            </div>
+          )}
           <Link to="/" className="text-primary underline-offset-4 hover:underline">
             Home
           </Link>
@@ -541,8 +793,154 @@ export default function Office() {
           className="block h-full w-full"
           style={{ width: "100%", height: "100%", minHeight: "400px" }}
         />
-        <div className="absolute bottom-4 left-4 rounded-lg border border-white/20 bg-black/70 px-4 py-2 font-mono text-sm text-white shadow-lg">
-          <span className="text-emerald-400">WASD</span> or <span className="text-emerald-400">↑↓←→</span> move · Camera follows
+        <div className="absolute bottom-4 left-4 flex flex-col gap-2">
+          <div className="rounded-lg border border-white/20 bg-black/70 px-4 py-2 font-mono text-sm text-white shadow-lg">
+            <span className="text-emerald-400">WASD</span> or <span className="text-emerald-400">↑↓←→</span> move · <span className="text-sky-300">Scroll</span> zoom · <span className="text-sky-300">Right-drag or trackpad swipe</span> orbit
+          </div>
+          {!inCall && (
+            <p className="text-xs text-white/80">
+              <span className="font-medium text-blue-300">Blue zones</span> = meeting rooms · Or use <span className="font-medium text-blue-300">Video call</span> in header
+            </p>
+          )}
+        </div>
+
+        {meetingZone && !inCall && (
+          <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 rounded-lg border border-primary/50 bg-card/95 px-4 py-3 shadow-xl">
+            <span className="text-sm font-medium">Meeting room</span>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={joinMeeting}>
+                Join video call
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">Or press E</p>
+            {callError && <p className="text-xs text-destructive">{callError}</p>}
+          </div>
+        )}
+
+        {inCall && dyteToken && (
+          <div className="absolute inset-0 z-10 flex flex-col bg-background/95 p-4">
+            <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border">
+              <DyteCallView token={dyteToken} onLeave={leaveMeeting} />
+            </div>
+          </div>
+        )}
+
+        <div className="absolute right-4 top-20 flex flex-col">
+          <Button
+            variant="outline"
+            size="sm"
+            className="mb-2 rounded-full border-white/20 bg-black/70 text-white shadow-lg hover:bg-black/80"
+            onClick={() => setChatOpen((o) => !o)}
+          >
+            {chatOpen ? "Close chat" : "Chat"}
+          </Button>
+          {chatOpen && (
+            <div className="flex w-80 flex-col rounded-lg border border-border bg-card shadow-xl">
+              <div className="flex border-b border-border">
+                <button
+                  type="button"
+                  className={`flex-1 px-3 py-2 text-sm font-medium ${chatTab === "space" ? "border-b-2 border-primary bg-muted/50 text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                  onClick={() => setChatTab("space")}
+                >
+                  Space
+                </button>
+                <button
+                  type="button"
+                  className={`flex-1 px-3 py-2 text-sm font-medium ${chatTab === "dm" ? "border-b-2 border-primary bg-muted/50 text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                  onClick={() => setChatTab("dm")}
+                >
+                  DMs
+                </button>
+              </div>
+              {chatTab === "space" && (
+                <>
+                  <div
+                    ref={chatListRef}
+                    className="flex max-h-64 flex-col gap-1 overflow-y-auto p-2"
+                  >
+                    {spaceMessages.map((m) => (
+                      <div key={m.id} className="rounded bg-muted/50 px-2 py-1 text-sm">
+                        <span className="font-medium text-muted-foreground">{m.senderDisplayName}:</span> {m.content}
+                      </div>
+                    ))}
+                  </div>
+                  <form
+                    className="flex gap-2 border-t border-border p-2"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const input = e.currentTarget.querySelector<HTMLInputElement>("input[name=chat]");
+                      if (input) {
+                        sendMessage(input.value);
+                        input.value = "";
+                      }
+                    }}
+                  >
+                    <Input name="chat" placeholder="Message space..." className="flex-1" maxLength={2000} />
+                    <Button type="submit" size="sm">Send</Button>
+                  </form>
+                </>
+              )}
+              {chatTab === "dm" && (
+                <>
+                  {!dmWithUserId ? (
+                    <div className="max-h-64 overflow-y-auto p-2">
+                      <p className="mb-2 text-xs text-muted-foreground">Start a conversation</p>
+                      {Array.from(others.values()).map((u) => (
+                        <button
+                          key={u.userId}
+                          type="button"
+                          className="mb-1 block w-full rounded bg-muted/50 px-2 py-2 text-left text-sm hover:bg-muted"
+                          onClick={() => setDmWithUserId(u.userId)}
+                        >
+                          {u.displayName}
+                        </button>
+                      ))}
+                      {others.size === 0 && <p className="text-sm text-muted-foreground">No one else in space yet.</p>}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2 border-b border-border px-2 py-1">
+                        <button
+                          type="button"
+                          className="text-xs text-muted-foreground hover:underline"
+                          onClick={() => setDmWithUserId(null)}
+                        >
+                          ← Back
+                        </button>
+                        <span className="text-sm font-medium">
+                          {Array.from(others.values()).find((o) => o.userId === dmWithUserId)?.displayName ?? "User"}
+                        </span>
+                      </div>
+                      <div
+                        ref={chatListRef}
+                        className="flex max-h-64 flex-col gap-1 overflow-y-auto p-2"
+                      >
+                        {(dmMessagesByUser.get(dmWithUserId) ?? []).map((m) => (
+                          <div key={m.id} className="rounded bg-muted/50 px-2 py-1 text-sm">
+                            <span className="font-medium text-muted-foreground">{m.senderDisplayName}:</span> {m.content}
+                          </div>
+                        ))}
+                      </div>
+                      <form
+                        className="flex gap-2 border-t border-border p-2"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          const input = e.currentTarget.querySelector<HTMLInputElement>("input[name=dm]");
+                          if (input) {
+                            sendMessage(input.value);
+                            input.value = "";
+                          }
+                        }}
+                      >
+                        <Input name="dm" placeholder="Message..." className="flex-1" maxLength={2000} />
+                        <Button type="submit" size="sm">Send</Button>
+                      </form>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

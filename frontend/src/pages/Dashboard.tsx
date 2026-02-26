@@ -4,7 +4,13 @@ import { useAuth } from "@/context/AuthContext";
 import { api } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 interface Org {
   id: string;
@@ -55,14 +61,16 @@ export default function Dashboard() {
         name: createName,
         joinPassword: createPassword,
       });
-      const { data } = await api.get<{ organizations: Org[] }>("/organizations/my");
+      const { data } = await api.get<{ organizations: Org[] }>(
+        "/organizations/my",
+      );
       setOrganizations(data.organizations);
       setCreateName("");
       setCreatePassword("");
     } catch (err) {
       setCreateError(
-        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-          "Failed to create organization"
+        (err as { response?: { data?: { error?: string } } })?.response?.data
+          ?.error || "Failed to create organization",
       );
     } finally {
       setCreateSubmitting(false);
@@ -78,14 +86,16 @@ export default function Dashboard() {
         orgIdentifier: joinSlug.trim(),
         joinPassword: joinPassword,
       });
-      const { data } = await api.get<{ organizations: Org[] }>("/organizations/my");
+      const { data } = await api.get<{ organizations: Org[] }>(
+        "/organizations/my",
+      );
       setOrganizations(data.organizations);
       setJoinSlug("");
       setJoinPassword("");
     } catch (err) {
       setJoinError(
-        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-          "Failed to join organization"
+        (err as { response?: { data?: { error?: string } } })?.response?.data
+          ?.error || "Failed to join organization",
       );
     } finally {
       setJoinSubmitting(false);
@@ -224,11 +234,17 @@ export default function Dashboard() {
       </Card>
 
       <p className="text-sm text-muted-foreground">
-        <Link to="/" className="text-primary underline-offset-4 hover:underline">
+        <Link
+          to="/"
+          className="text-primary underline-offset-4 hover:underline"
+        >
           Home
         </Link>
         {" · "}
-        <Link to="/office" className="text-primary underline-offset-4 hover:underline">
+        <Link
+          to="/office"
+          className="text-primary underline-offset-4 hover:underline"
+        >
           Office
         </Link>
       </p>

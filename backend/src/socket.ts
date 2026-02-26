@@ -2,8 +2,15 @@ import { Server as HttpServer } from "http";
 import { Server, Socket } from "socket.io";
 import jwt from "jsonwebtoken";
 import { env } from "./config/env";
+import { prisma } from "./db/prisma";
 
 const JWT_SECRET = env.jwtSecret;
+
+function dmChannelId(userId1: string, userId2: string): string {
+  return [userId1, userId2].sort().join("_");
+}
+
+const MAX_CHAT_CONTENT_LENGTH = 2000;
 
 // In-memory presence: spaceId -> socketId -> { userId, displayName, x, y, z, direction, avatar }
 const presence = new Map<string, Map<string, { userId: string; displayName: string; x: number; y: number; z: number; direction: string; avatar: unknown }>>();
@@ -90,6 +97,77 @@ export function attachSocket(httpServer: HttpServer): Server {
       }
       (socket as Socket & { currentSpaceId?: string }).currentSpaceId = undefined;
       socket.to(room).emit("user_left", { userId: (socket as Socket & { userId: string }).userId, socketId: socket.id });
+    });
+
+    socket.on("join_dm", (payload: { otherUserId: string }) => {
+      const otherUserId = payload?.otherUserId;
+      if (!otherUserId || typeof otherUserId !== "string" || otherUserId === userId) return;
+      const room = `dm:${dmChannelId(userId, otherUserId)}`;
+      socket.join(room);
+    });
+
+    socket.on("leave_dm", (payload: { otherUserId: string }) => {
+      const otherUserId = payload?.otherUserId;
+      if (!otherUserId || typeof otherUserId !== "string") return;
+      socket.leave(`dm:${dmChannelId(userId, otherUserId)}`);
+    });
+
+    socket.on("chat_message", async (payload: { channelType: string; channelId: string; content: string }) => {
+      const channelType = payload?.channelType;
+      const channelId = payload?.channelId;
+      let content = typeof payload?.content === "string" ? payload.content.trim() : "";
+      if (!channelType || !channelId || !content) return;
+      if (content.length > MAX_CHAT_CONTENT_LENGTH) content = content.slice(0, MAX_CHAT_CONTENT_LENGTH);
+      if (channelType !== "SPACE" && channelType !== "DM") return;
+
+      try {
+        if (channelType === "SPACE") {
+          const space = await prisma.space.findUnique({
+            where: { id: channelId },
+            select: { id: true, organizationId: true },
+          });
+          if (!space) return;
+          const membership = await prisma.orgMembership.findUnique({
+            where: { userId_organizationId: { userId, organizationId: space.organizationId } },
+          });
+          if (!membership) return;
+
+          const msg = await prisma.chatMessage.create({
+            data: { channelType: "SPACE", channelId, senderUserId: userId, content },
+            include: { sender: { select: { displayName: true } } },
+          });
+          const payloadOut = {
+            id: msg.id,
+            channelType: "SPACE",
+            channelId: msg.channelId,
+            senderUserId: msg.senderUserId,
+            senderDisplayName: msg.sender.displayName,
+            content: msg.content,
+            createdAt: msg.createdAt.toISOString(),
+          };
+          io.to(`space:${channelId}`).emit("chat_message", payloadOut);
+        } else {
+          const otherUserId = channelId;
+          const roomId = dmChannelId(userId, otherUserId);
+          const msg = await prisma.chatMessage.create({
+            data: { channelType: "DM", channelId: roomId, senderUserId: userId, content },
+            include: { sender: { select: { displayName: true } } },
+          });
+          const payloadOut = {
+            id: msg.id,
+            channelType: "DM",
+            channelId: roomId,
+            senderUserId: msg.senderUserId,
+            senderDisplayName: msg.sender.displayName,
+            content: msg.content,
+            createdAt: msg.createdAt.toISOString(),
+          };
+          io.to(`dm:${roomId}`).emit("chat_message", payloadOut);
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(err);
+      }
     });
 
     socket.on("move", (payload: { spaceId: string; x: number; y: number; z?: number; direction: string }) => {

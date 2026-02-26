@@ -15,9 +15,10 @@ model User {
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
 
-  memberships  OrgMembership[]
+  memberships   OrgMembership[]
   organizations Organization[] @relation("OrganizationOwner")
-  avatars      Avatar[]
+  avatars       Avatar[]
+  chatMessages  ChatMessage[]
 }
 
 model Organization {
@@ -81,5 +82,24 @@ model Space {
   organization Organization @relation(fields: [organizationId], references: [id])
 
   @@index([organizationId])
+}
+
+enum ChatChannelType {
+  SPACE
+  DM
+}
+
+model ChatMessage {
+  id           String         @id @default(cuid())
+  channelType  ChatChannelType
+  channelId    String         // spaceId for SPACE; "userId1_userId2" (sorted) for DM
+  senderUserId String
+  content      String
+  createdAt    DateTime       @default(now())
+
+  sender User @relation(fields: [senderUserId], references: [id])
+
+  @@index([channelType, channelId])
+  @@index([senderUserId])
 }
 
