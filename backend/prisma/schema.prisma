@@ -1,0 +1,85 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String          @id @default(cuid())
+  email        String          @unique
+  passwordHash String
+  displayName  String
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  memberships  OrgMembership[]
+  organizations Organization[] @relation("OrganizationOwner")
+  avatars      Avatar[]
+}
+
+model Organization {
+  id               String          @id @default(cuid())
+  name             String
+  slug             String          @unique
+  joinPasswordHash String
+  ownerId          String
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  owner       User           @relation("OrganizationOwner", fields: [ownerId], references: [id])
+  memberships OrgMembership[]
+  avatars     Avatar[]
+  spaces      Space[]
+}
+
+model OrgMembership {
+  id             String        @id @default(cuid())
+  userId         String
+  organizationId String
+  role           OrgRole       @default(MEMBER)
+  createdAt      DateTime      @default(now())
+
+  user         User         @relation(fields: [userId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([userId, organizationId])
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model Avatar {
+  id             String   @id @default(cuid())
+  userId         String
+  organizationId String
+  spriteSet      String   // e.g. "default", "casual"
+  colors         Json?    // { hair?, skin?, shirt? }
+  accessories    Json?    // { hat?, glasses? }
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user         User         @relation(fields: [userId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([userId, organizationId])
+}
+
+model Space {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  isDefault      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId])
+}
+
