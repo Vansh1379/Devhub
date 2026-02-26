@@ -766,21 +766,21 @@ export default function Office() {
       cancelAnimationFrame(raf);
       othersGroupsRef.current.forEach((g) => {
         scene.remove(g);
-        g.traverse((c) => {
+        g.traverse((c: THREE.Object3D) => {
           if (c instanceof THREE.Mesh) {
             c.geometry?.dispose();
             if (Array.isArray(c.material))
-              c.material.forEach((m) => m.dispose());
+              c.material.forEach((m: THREE.Material) => m.dispose());
             else c.material?.dispose();
           }
         });
       });
       othersGroupsRef.current.clear();
       scene.remove(selfGroup);
-      selfGroup.traverse((c) => {
+      selfGroup.traverse((c: THREE.Object3D) => {
         if (c instanceof THREE.Mesh) {
           c.geometry?.dispose();
-          if (Array.isArray(c.material)) c.material.forEach((m) => m.dispose());
+          if (Array.isArray(c.material)) c.material.forEach((m: THREE.Material) => m.dispose());
           else c.material?.dispose();
         }
       });
@@ -801,11 +801,11 @@ export default function Office() {
     existing.forEach((group, id) => {
       if (!needed.has(id)) {
         scene.remove(group);
-        group.traverse((c) => {
+        group.traverse((c: THREE.Object3D) => {
           if (c instanceof THREE.Mesh) {
             c.geometry?.dispose();
             if (Array.isArray(c.material))
-              c.material.forEach((m) => m.dispose());
+              c.material.forEach((m: THREE.Material) => m.dispose());
             else c.material?.dispose();
           }
         });
