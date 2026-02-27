@@ -197,6 +197,49 @@ async function ensureOrgMember(
   return !!m;
 }
 
+// Helper: ensure user is owner of org, return 403 else
+async function ensureOrgOwner(
+  userId: string,
+  orgId: string,
+): Promise<boolean> {
+  const m = await prisma.orgMembership.findUnique({
+    where: {
+      userId_organizationId: { userId, organizationId: orgId },
+    },
+  });
+  return m?.role === "OWNER";
+}
+
+// PATCH /organizations/:orgId/join-password - owner sets new join password
+router.patch("/:orgId/join-password", async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    const { orgId } = req.params;
+    const isOwner = await ensureOrgOwner(req.user.userId, orgId);
+    if (!isOwner) {
+      return res.status(403).json({
+        error: "Only the organization owner can change the join password",
+      });
+    }
+    const { joinPassword } = req.body as { joinPassword?: string };
+    if (!joinPassword || typeof joinPassword !== "string") {
+      return res
+        .status(400)
+        .json({ error: "joinPassword is required" });
+    }
+    const joinPasswordHash = await bcrypt.hash(joinPassword, 10);
+    await prisma.organization.update({
+      where: { id: orgId },
+      data: { joinPasswordHash },
+    });
+    return res.json({ ok: true });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // GET /organizations/:orgId/avatar/me
 router.get("/:orgId/avatar/me", async (req, res) => {
   try {

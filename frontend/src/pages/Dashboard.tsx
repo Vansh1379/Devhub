@@ -35,6 +35,40 @@ export default function Dashboard() {
   const [joinError, setJoinError] = useState("");
   const [createSubmitting, setCreateSubmitting] = useState(false);
   const [joinSubmitting, setJoinSubmitting] = useState(false);
+  const [resetPasswordOrgId, setResetPasswordOrgId] = useState<string | null>(
+    null,
+  );
+  const [newJoinPassword, setNewJoinPassword] = useState("");
+  const [resetPasswordSubmitting, setResetPasswordSubmitting] = useState(false);
+  const [resetPasswordError, setResetPasswordError] = useState("");
+  const [copiedSlug, setCopiedSlug] = useState<string | null>(null);
+
+  const copySlug = (slug: string) => {
+    navigator.clipboard.writeText(slug).then(() => {
+      setCopiedSlug(slug);
+      setTimeout(() => setCopiedSlug(null), 2000);
+    });
+  };
+
+  const handleResetJoinPassword = async (orgId: string, e: React.FormEvent) => {
+    e.preventDefault();
+    setResetPasswordError("");
+    setResetPasswordSubmitting(true);
+    try {
+      await api.patch(`/organizations/${orgId}/join-password`, {
+        joinPassword: newJoinPassword,
+      });
+      setResetPasswordOrgId(null);
+      setNewJoinPassword("");
+    } catch (err) {
+      setResetPasswordError(
+        (err as { response?: { data?: { error?: string } } })?.response?.data
+          ?.error || "Failed to set password",
+      );
+    } finally {
+      setResetPasswordSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     if (!user) {
@@ -163,17 +197,113 @@ export default function Dashboard() {
               <ul className="space-y-2">
                 {organizations.map((org) => (
                   <li key={org.id}>
-                    <Card className="flex flex-wrap items-center gap-2 border-white/10 bg-white/5 p-4">
-                      <span className="font-medium text-white">{org.name}</span>
-                      <span className="text-gray-400">
-                        ({org.slug}) — {org.role}
-                      </span>
-                      <Link
-                        to={`/org/${org.id}`}
-                        className="ml-auto text-sm text-sky-300 underline-offset-4 hover:underline"
-                      >
-                        Enter
-                      </Link>
+                    <Card className="border-white/10 bg-white/5 p-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium text-white">
+                          {org.name}
+                        </span>
+                        <span className="text-gray-400">
+                          ({org.slug}) — {org.role}
+                        </span>
+                        <Link
+                          to={`/org/${org.id}`}
+                          className="ml-auto text-sm text-sky-300 underline-offset-4 hover:underline"
+                        >
+                          Enter
+                        </Link>
+                      </div>
+                      {org.role === "OWNER" && (
+                        <div className="mt-4 space-y-3 border-t border-white/10 pt-4">
+                          <p className="text-sm font-medium text-gray-300">
+                            Invite others
+                          </p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm text-gray-400">
+                              Org slug (share this):
+                            </span>
+                            <code className="rounded bg-white/10 px-2 py-1 text-sm text-white">
+                              {org.slug}
+                            </code>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="border-white/20 text-gray-200 hover:bg-white/10"
+                              onClick={() => copySlug(org.slug)}
+                            >
+                              {copiedSlug === org.slug ? "Copied!" : "Copy"}
+                            </Button>
+                          </div>
+                          <p className="text-xs text-gray-500">
+                            Others join via Dashboard → Join organization using
+                            slug and the join password.
+                          </p>
+                          {resetPasswordOrgId === org.id ? (
+                            <form
+                              onSubmit={(e) =>
+                                handleResetJoinPassword(org.id, e)
+                              }
+                              className="flex flex-wrap items-end gap-2"
+                            >
+                              <div className="flex-1 min-w-[160px] space-y-1">
+                                <Input
+                                  type="password"
+                                  placeholder="New join password"
+                                  value={newJoinPassword}
+                                  onChange={(e) =>
+                                    setNewJoinPassword(e.target.value)
+                                  }
+                                  required
+                                  className={inputClass}
+                                />
+                              </div>
+                              <Button
+                                type="submit"
+                                size="sm"
+                                disabled={
+                                  !newJoinPassword.trim() ||
+                                  resetPasswordSubmitting
+                                }
+                              >
+                                {resetPasswordSubmitting
+                                  ? "Setting…"
+                                  : "Set password"}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="text-gray-400"
+                                onClick={() => {
+                                  setResetPasswordOrgId(null);
+                                  setNewJoinPassword("");
+                                  setResetPasswordError("");
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                              {resetPasswordError && (
+                                <p className="w-full text-sm text-amber-300">
+                                  {resetPasswordError}
+                                </p>
+                              )}
+                            </form>
+                          ) : (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="border-white/20 text-gray-400 hover:bg-white/10"
+                              onClick={() => {
+                                setResetPasswordOrgId(org.id);
+                                setResetPasswordError("");
+                              }}
+                            >
+                              Set or reset join password
+                            </Button>
+                          )}
+                        </div>
+                      )}
                     </Card>
                   </li>
                 ))}

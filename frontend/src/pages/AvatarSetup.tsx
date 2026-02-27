@@ -26,7 +26,7 @@ export default function AvatarSetup() {
         colors: {},
         accessories: {},
       });
-      navigate(`/org/${orgId}`, { replace: true });
+      navigate(`/org/${orgId}/spaces`, { replace: true });
     } catch (err) {
       setError(
         (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||

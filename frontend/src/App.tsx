@@ -7,6 +7,7 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import OrgEntry from "./pages/OrgEntry";
+import SpaceSelect from "./pages/SpaceSelect";
 import Office from "./pages/Office";
 
 const Home: React.FC = () => {
@@ -58,6 +59,7 @@ function AppRoutes() {
       <Route path="/register" element={<Register />} />
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/org/:orgId" element={<OrgEntry />} />
+      <Route path="/org/:orgId/spaces" element={<SpaceSelect />} />
       <Route path="/office" element={<Office />} />
     </Routes>
   );

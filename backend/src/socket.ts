@@ -3,6 +3,12 @@ import { Server, Socket } from "socket.io";
 import jwt from "jsonwebtoken";
 import { env } from "./config/env";
 import { prisma } from "./db/prisma";
+import {
+  getSpaceUsers,
+  setUserInSpace,
+  removeUserFromSpace,
+  updateUserPosition,
+} from "./presence";
 
 const JWT_SECRET = env.jwtSecret;
 
@@ -12,22 +18,14 @@ function dmChannelId(userId1: string, userId2: string): string {
 
 const MAX_CHAT_CONTENT_LENGTH = 2000;
 
-// In-memory presence: spaceId -> socketId -> { userId, displayName, x, y, z, direction, avatar }
-const presence = new Map<string, Map<string, { userId: string; displayName: string; x: number; y: number; z: number; direction: string; avatar: unknown }>>();
+// Phase 3: movement bounds (match frontend floor size)
+const FLOOR_HALF = 17.5;
 
-function getOrCreateSpace(spaceId: string): Map<string, { userId: string; displayName: string; x: number; y: number; z: number; direction: string; avatar: unknown }> {
-  let space = presence.get(spaceId);
-  if (!space) {
-    space = new Map();
-    presence.set(spaceId, space);
-  }
-  return space;
-}
-
-function getSpaceUsers(spaceId: string): Array<{ socketId: string; userId: string; displayName: string; x: number; y: number; z: number; direction: string; avatar: unknown }> {
-  const space = presence.get(spaceId);
-  if (!space) return [];
-  return Array.from(space.entries()).map(([socketId, data]) => ({ socketId, ...data }));
+function clampPosition(x: number, z: number): { x: number; z: number } {
+  return {
+    x: Math.max(-FLOOR_HALF, Math.min(FLOOR_HALF, x)),
+    z: Math.max(-FLOOR_HALF, Math.min(FLOOR_HALF, z)),
+  };
 }
 
 export function attachSocket(httpServer: HttpServer): Server {
@@ -54,23 +52,35 @@ export function attachSocket(httpServer: HttpServer): Server {
     }
     (socket as Socket & { userId: string }).userId = userId;
 
-    socket.on("join_space", (payload: { spaceId: string; displayName?: string; x?: number; y?: number; z?: number; direction?: string; avatar?: unknown }) => {
+    socket.on("join_space", async (payload: { spaceId: string; displayName?: string; x?: number; y?: number; z?: number; direction?: string; avatar?: unknown }) => {
       const spaceId = payload?.spaceId;
       if (!spaceId || typeof spaceId !== "string") return;
       const displayName = typeof payload.displayName === "string" && payload.displayName.trim() ? payload.displayName.trim() : "User";
-      const x = typeof payload.x === "number" ? payload.x : 0;
+      let x = typeof payload.x === "number" ? payload.x : 0;
       const y = typeof payload.y === "number" ? payload.y : 0;
-      const z = typeof payload.z === "number" ? payload.z : 0;
+      let z = typeof payload.z === "number" ? payload.z : 0;
       const direction = typeof payload.direction === "string" ? payload.direction : "down";
       const avatar = payload.avatar ?? null;
 
+      const clamped = clampPosition(x, z);
+      x = clamped.x;
+      z = clamped.z;
+
       const room = `space:${spaceId}`;
       socket.join(room);
-      const space = getOrCreateSpace(spaceId);
-      space.set(socket.id, { userId, displayName, x, y, z, direction, avatar });
+      await setUserInSpace(spaceId, socket.id, {
+        userId,
+        displayName,
+        x,
+        y,
+        z,
+        direction,
+        avatar,
+      });
       (socket as Socket & { currentSpaceId?: string }).currentSpaceId = spaceId;
 
-      const users = getSpaceUsers(spaceId).map((u) => ({ userId: u.userId, socketId: u.socketId, displayName: u.displayName, x: u.x, y: u.y, z: u.z, direction: u.direction, avatar: u.avatar }));
+      const spaceUsers = await getSpaceUsers(spaceId);
+      const users = spaceUsers.map((u) => ({ userId: u.userId, socketId: u.socketId, displayName: u.displayName, x: u.x, y: u.y, z: u.z, direction: u.direction, avatar: u.avatar }));
       socket.emit("space_state", { users });
 
       socket.to(room).emit("user_joined", {
@@ -85,16 +95,12 @@ export function attachSocket(httpServer: HttpServer): Server {
       });
     });
 
-    socket.on("leave_space", (payload: { spaceId: string }) => {
+    socket.on("leave_space", async (payload: { spaceId: string }) => {
       const spaceId = payload?.spaceId ?? (socket as Socket & { currentSpaceId?: string }).currentSpaceId;
       if (!spaceId) return;
       const room = `space:${spaceId}`;
       socket.leave(room);
-      const space = presence.get(spaceId);
-      if (space) {
-        space.delete(socket.id);
-        if (space.size === 0) presence.delete(spaceId);
-      }
+      await removeUserFromSpace(spaceId, socket.id);
       (socket as Socket & { currentSpaceId?: string }).currentSpaceId = undefined;
       socket.to(room).emit("user_left", { userId: (socket as Socket & { userId: string }).userId, socketId: socket.id });
     });
@@ -170,22 +176,21 @@ export function attachSocket(httpServer: HttpServer): Server {
       }
     });
 
-    socket.on("move", (payload: { spaceId: string; x: number; y: number; z?: number; direction: string }) => {
+    socket.on("move", async (payload: { spaceId: string; x: number; y: number; z?: number; direction: string }) => {
       const spaceId = payload?.spaceId;
       if (!spaceId || typeof spaceId !== "string") return;
-      const x = typeof payload.x === "number" ? payload.x : 0;
+      let x = typeof payload.x === "number" ? payload.x : 0;
       const y = typeof payload.y === "number" ? payload.y : 0;
-      const z = typeof payload.z === "number" ? payload.z : 0;
+      let z = typeof payload.z === "number" ? payload.z : 0;
       const direction = typeof payload.direction === "string" ? payload.direction : "down";
 
-      const space = getOrCreateSpace(spaceId);
-      const existing = space.get(socket.id);
-      if (existing) {
-        existing.x = x;
-        existing.y = y;
-        existing.z = z;
-        existing.direction = direction;
-      }
+      const clamped = clampPosition(x, z);
+      x = clamped.x;
+      z = clamped.z;
+
+      const updated = await updateUserPosition(spaceId, socket.id, { x, y, z, direction });
+      if (!updated) return;
+
       socket.to(`space:${spaceId}`).emit("user_moved", {
         userId: (socket as Socket & { userId: string }).userId,
         socketId: socket.id,
@@ -196,15 +201,11 @@ export function attachSocket(httpServer: HttpServer): Server {
       });
     });
 
-    socket.on("disconnect", () => {
+    socket.on("disconnect", async () => {
       const spaceId = (socket as Socket & { currentSpaceId?: string }).currentSpaceId;
       if (spaceId) {
         const room = `space:${spaceId}`;
-        const space = presence.get(spaceId);
-        if (space) {
-          space.delete(socket.id);
-          if (space.size === 0) presence.delete(spaceId);
-        }
+        await removeUserFromSpace(spaceId, socket.id);
         socket.to(room).emit("user_left", { userId: (socket as Socket & { userId: string }).userId, socketId: socket.id });
       }
     });
