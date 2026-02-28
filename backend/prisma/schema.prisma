@@ -76,6 +76,7 @@ model Space {
   organizationId String
   name           String
   isDefault      Boolean  @default(false)
+  officeLayout   Json?    // { rooms: [...], desks: [...] } for 3D office
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

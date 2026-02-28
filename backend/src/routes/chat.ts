@@ -60,6 +60,77 @@ router.get("/spaces/:spaceId/messages", async (req, res) => {
   }
 });
 
+// GET /spaces/:spaceId/layout — office layout (rooms, desks) for 3D view
+router.get("/spaces/:spaceId/layout", async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    const { spaceId } = req.params;
+    if (!spaceId) return res.status(400).json({ error: "spaceId required" });
+
+    const space = await prisma.space.findUnique({
+      where: { id: spaceId },
+      select: { id: true, organizationId: true, officeLayout: true },
+    });
+    if (!space) return res.status(404).json({ error: "Space not found" });
+
+    const membership = await prisma.orgMembership.findUnique({
+      where: {
+        userId_organizationId: { userId, organizationId: space.organizationId },
+      },
+    });
+    if (!membership) return res.status(403).json({ error: "Not a member of this space's organization" });
+
+    const layout = space.officeLayout as Record<string, unknown> | null;
+    return res.json({ layout: layout ?? null });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// PATCH /spaces/:spaceId/layout — update office layout (rooms, desks)
+router.patch("/spaces/:spaceId/layout", async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    const { spaceId } = req.params;
+    if (!spaceId) return res.status(400).json({ error: "spaceId required" });
+
+    const space = await prisma.space.findUnique({
+      where: { id: spaceId },
+      select: { id: true, organizationId: true },
+    });
+    if (!space) return res.status(404).json({ error: "Space not found" });
+
+    const membership = await prisma.orgMembership.findUnique({
+      where: {
+        userId_organizationId: { userId, organizationId: space.organizationId },
+      },
+    });
+    if (!membership) return res.status(403).json({ error: "Not a member of this space's organization" });
+
+    const layout = req.body as Record<string, unknown>;
+    if (typeof layout !== "object" || layout === null) {
+      return res.status(400).json({ error: "layout must be an object" });
+    }
+
+    await prisma.space.update({
+      where: { id: spaceId },
+      data: { officeLayout: layout },
+    });
+
+    return res.json({ layout });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // GET /dms/:otherUserId/messages — recent DM messages between current user and otherUserId
 router.get("/dms/:otherUserId/messages", async (req, res) => {
   try {

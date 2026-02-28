@@ -26,6 +26,42 @@ const FLOOR_D = GRID_SIZE * CELL;
 const WALL_H = 4;
 const CAMERA_FOLLOW_LERP = 0.08;
 const OTHERS_LERP = 0.15;
+const DOOR_WIDTH = 2.2;
+
+// 3D rooms (Gather.town / Sky Office style): center, size, door, optional type for furniture
+export type DoorSide = "n" | "s" | "e" | "w";
+export type RoomType = "meeting" | "breakroom" | "cubicles" | "open";
+export interface RoomDef {
+  cx: number;
+  cz: number;
+  w: number;
+  d: number;
+  door: DoorSide;
+  roomId: string;
+  roomType?: RoomType;
+}
+
+// Office layout from API (stored per space). Desks: [cx, cz, halfW, halfD].
+export interface OfficeLayout {
+  rooms?: RoomDef[];
+  desks?: [number, number, number, number][];
+}
+
+// Sky Office–style layout: meeting room, break room, cubicles, open area
+const DEFAULT_OFFICE_LAYOUT: OfficeLayout = {
+  rooms: [
+    { cx: -10, cz: -8, w: 7, d: 6, door: "e", roomId: "room1", roomType: "meeting" },
+    { cx: 10, cz: -6, w: 6, d: 5, door: "w", roomId: "room2", roomType: "breakroom" },
+    { cx: 10, cz: 8, w: 8, d: 6, door: "w", roomId: "room3", roomType: "cubicles" },
+  ],
+  desks: [
+    [-6, 8, 2, 1],
+    [0, 8, 2, 1],
+    [6, 8, 2, 1],
+    [-8, 2, 1.5, 2],
+    [0, -12, 3, 1],
+  ],
+};
 
 type Direction = "up" | "down" | "left" | "right";
 
@@ -55,38 +91,117 @@ function directionToAngle(d: Direction): number {
   }
 }
 
-// Axis-aligned boxes: [x, z, halfW, halfD]
-const DESKS: [number, number, number, number][] = [
-  [-12, -10, 2, 1],
-  [8, -8, 2, 1],
-  [-6, 8, 2.5, 1],
-  [10, 6, 2, 1],
-  [-10, 2, 1.5, 2],
-  [0, -12, 3, 1],
-];
+// Wall segment for collision: [x1, z1, x2, z2]
+type WallSegment = [number, number, number, number];
 
-// Meeting zones: [x, z, halfW, halfD, roomId]
-const MEETING_ZONES: [number, number, number, number, string][] = [
-  [-12, -10, 2.5, 1.5, "room1"],
-  [8, -8, 2.5, 1.5, "room2"],
-];
+export interface LayoutData {
+  roomDefs: RoomDef[];
+  desks: [number, number, number, number][];
+  wallSegments: WallSegment[];
+  roomTables: [number, number, number, number][];
+}
 
-function isInMeetingZone(x: number, z: number): { roomId: string } | null {
-  for (const [cx, cz, hw, hd, roomId] of MEETING_ZONES) {
-    if (Math.abs(x - cx) <= hw && Math.abs(z - cz) <= hd) return { roomId };
+function getRoomWallSegments(roomDefs: RoomDef[]): WallSegment[] {
+  const segments: WallSegment[] = [];
+  const halfGap = DOOR_WIDTH / 2;
+  for (const r of roomDefs) {
+    const hw = r.w / 2;
+    const hd = r.d / 2;
+    const x0 = r.cx - hw;
+    const x1 = r.cx + hw;
+    const z0 = r.cz - hd;
+    const z1 = r.cz + hd;
+    // North (z = z1, x from x0 to x1) — top edge
+    if (r.door === "n") {
+      segments.push([x0, z1, r.cx - halfGap, z1]);
+      segments.push([r.cx + halfGap, z1, x1, z1]);
+    } else {
+      segments.push([x0, z1, x1, z1]);
+    }
+    // South (z = z0)
+    if (r.door === "s") {
+      segments.push([x0, z0, r.cx - halfGap, z0]);
+      segments.push([r.cx + halfGap, z0, x1, z0]);
+    } else {
+      segments.push([x0, z0, x1, z0]);
+    }
+    // East (x = x1)
+    if (r.door === "e") {
+      segments.push([x1, z0, x1, r.cz - halfGap]);
+      segments.push([x1, r.cz + halfGap, x1, z1]);
+    } else {
+      segments.push([x1, z0, x1, z1]);
+    }
+    // West (x = x0)
+    if (r.door === "w") {
+      segments.push([x0, z0, x0, r.cz - halfGap]);
+      segments.push([x0, r.cz + halfGap, x0, z1]);
+    } else {
+      segments.push([x0, z0, x0, z1]);
+    }
+  }
+  return segments;
+}
+
+function buildLayoutData(layout: OfficeLayout): LayoutData {
+  const roomDefs = layout?.rooms ?? [];
+  const desks = layout?.desks ?? [];
+  const wallSegments = getRoomWallSegments(roomDefs);
+  const roomTables: [number, number, number, number][] = roomDefs.map(
+    (r) => [
+      r.cx,
+      r.cz,
+      Math.min(r.w * 0.25, 1.1),
+      Math.min(r.d * 0.2, 0.6),
+    ],
+  );
+  return { roomDefs, desks, wallSegments, roomTables };
+}
+
+function isInMeetingZone(
+  x: number,
+  z: number,
+  roomDefs: RoomDef[],
+): { roomId: string } | null {
+  for (const r of roomDefs) {
+    const hw = r.w / 2 - 0.05;
+    const hd = r.d / 2 - 0.05;
+    if (Math.abs(x - r.cx) <= hw && Math.abs(z - r.cz) <= hd)
+      return { roomId: r.roomId };
   }
   return null;
+}
+
+// Closest point on segment [ax,az]-[bx,bz] to point (px, pz), and squared distance
+function closestOnSegment(
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+  px: number,
+  pz: number,
+): { x: number; z: number; distSq: number } {
+  const dx = bx - ax;
+  const dz = bz - az;
+  const lenSq = dx * dx + dz * dz;
+  let t = lenSq <= 0 ? 0 : ((px - ax) * dx + (pz - az) * dz) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  const qx = ax + t * dx;
+  const qz = az + t * dz;
+  const distSq = (px - qx) ** 2 + (pz - qz) ** 2;
+  return { x: qx, z: qz, distSq };
 }
 
 function checkCollision(
   x: number,
   z: number,
   radius: number,
+  layout: LayoutData,
 ): { x: number; z: number } {
   let outX = x;
   let outZ = z;
   const margin = radius + 0.1;
-  for (const [cx, cz, hw, hd] of DESKS) {
+  for (const [cx, cz, hw, hd] of [...layout.desks, ...layout.roomTables]) {
     const dx = Math.abs(x - cx);
     const dz = Math.abs(z - cz);
     if (dx < hw + margin && dz < hd + margin) {
@@ -96,6 +211,25 @@ function checkCollision(
       else outZ = outZ > cz ? cz + hd + margin : cz - hd - margin;
     }
   }
+  // Room walls (Gather-style): push out from wall segments
+  const r2 = margin * margin;
+  for (const [ax, az, bx, bz] of layout.wallSegments) {
+    const { x: qx, z: qz, distSq } = closestOnSegment(
+      ax,
+      az,
+      bx,
+      bz,
+      outX,
+      outZ,
+    );
+    if (distSq < r2 && distSq > 1e-6) {
+      const dist = Math.sqrt(distSq);
+      const nx = (outX - qx) / dist;
+      const nz = (outZ - qz) / dist;
+      outX = qx + nx * margin;
+      outZ = qz + nz * margin;
+    }
+  }
   const hw = FLOOR_W / 2 - margin;
   const hd = FLOOR_D / 2 - margin;
   outX = Math.max(-hw, Math.min(hw, outX));
@@ -103,28 +237,262 @@ function checkCollision(
   return { x: outX, z: outZ };
 }
 
-function createCharacterMesh(color: number, isSelf: boolean): THREE.Group {
+// Human-like 3D avatar (Sky Office / Gather style): torso, head, legs
+function createCharacterMesh(
+  color: number,
+  _isSelf: boolean,
+  displayName?: string,
+): THREE.Group {
   const group = new THREE.Group();
-  const bodyGeo = new THREE.CapsuleGeometry(0.35, 0.6, 4, 8);
-  const bodyMat = new THREE.MeshStandardMaterial({ color });
-  const body = new THREE.Mesh(bodyGeo, bodyMat);
-  body.position.y = 0.5;
-  body.castShadow = true;
-  body.receiveShadow = true;
-  group.add(body);
+  const skin = 0xffdbac;
+  const legColor = 0x4a5568;
 
-  const headGeo = new THREE.SphereGeometry(0.28, 12, 12);
-  const headMat = new THREE.MeshStandardMaterial({ color: 0xffdbac });
+  // Torso (shirt) — rounded box
+  const torsoGeo = new THREE.BoxGeometry(0.36, 0.5, 0.2);
+  const torsoMat = new THREE.MeshStandardMaterial({ color });
+  const torso = new THREE.Mesh(torsoGeo, torsoMat);
+  torso.position.y = 0.72;
+  torso.castShadow = true;
+  torso.receiveShadow = true;
+  group.add(torso);
+
+  // Head
+  const headGeo = new THREE.SphereGeometry(0.22, 12, 12);
+  const headMat = new THREE.MeshStandardMaterial({ color: skin });
   const head = new THREE.Mesh(headGeo, headMat);
-  head.position.y = 1.15;
+  head.position.y = 1.12;
   head.castShadow = true;
   group.add(head);
 
+  // Legs (two simple boxes so it reads as a person from above)
+  const legGeo = new THREE.BoxGeometry(0.12, 0.45, 0.1);
+  const legMat = new THREE.MeshStandardMaterial({ color: legColor });
+  const legL = new THREE.Mesh(legGeo, legMat);
+  legL.position.set(-0.08, 0.22, 0);
+  legL.castShadow = true;
+  group.add(legL);
+  const legR = new THREE.Mesh(legGeo, legMat.clone());
+  legR.position.set(0.08, 0.22, 0);
+  legR.castShadow = true;
+  group.add(legR);
+
+  (group as THREE.Group & { displayName?: string }).displayName = displayName;
   return group;
+}
+
+// Build 3D room meshes (Gather.town style): walls with door gap + room floor
+function addRoomMeshes(
+  scene: THREE.Scene,
+  roomDefs: RoomDef[],
+  wallMat: THREE.MeshStandardMaterial,
+  roomFloorMat: THREE.MeshStandardMaterial,
+) {
+  const halfGap = DOOR_WIDTH / 2;
+  for (const r of roomDefs) {
+    const hw = r.w / 2;
+    const hd = r.d / 2;
+    const x0 = r.cx - hw;
+    const x1 = r.cx + hw;
+    const z0 = r.cz - hd;
+    const z1 = r.cz + hd;
+
+    // Room floor (slightly raised, distinct color)
+    const roomFloor = new THREE.Mesh(
+      new THREE.PlaneGeometry(r.w, r.d),
+      roomFloorMat,
+    );
+    roomFloor.rotation.x = -Math.PI / 2;
+    roomFloor.position.set(r.cx, 0.03, r.cz);
+    roomFloor.receiveShadow = true;
+    scene.add(roomFloor);
+
+    const addWallStrip = (sx: number, sz: number, ex: number, ez: number) => {
+      const len = Math.hypot(ex - sx, ez - sz);
+      if (len < 0.1) return;
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(len, WALL_H, 0.4),
+        wallMat,
+      );
+      mesh.position.set((sx + ex) / 2, WALL_H / 2, (sz + ez) / 2);
+      mesh.rotation.y = Math.atan2(ez - sz, ex - sx);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+    };
+
+    // North wall (z = z1)
+    if (r.door === "n") {
+      addWallStrip(x0, z1, r.cx - halfGap, z1);
+      addWallStrip(r.cx + halfGap, z1, x1, z1);
+    } else {
+      addWallStrip(x0, z1, x1, z1);
+    }
+    if (r.door === "s") {
+      addWallStrip(x0, z0, r.cx - halfGap, z0);
+      addWallStrip(r.cx + halfGap, z0, x1, z0);
+    } else {
+      addWallStrip(x0, z0, x1, z0);
+    }
+    if (r.door === "e") {
+      addWallStrip(x1, z0, x1, r.cz - halfGap);
+      addWallStrip(x1, r.cz + halfGap, x1, z1);
+    } else {
+      addWallStrip(x1, z0, x1, z1);
+    }
+    if (r.door === "w") {
+      addWallStrip(x0, z0, x0, r.cz - halfGap);
+      addWallStrip(x0, r.cz + halfGap, x0, z1);
+    } else {
+      addWallStrip(x0, z0, x0, z1);
+    }
+
+    // Room-type-specific furniture (Sky Office style)
+    const type = r.roomType ?? "open";
+    const tableMat = new THREE.MeshStandardMaterial({
+      color: 0x78716c,
+      roughness: 0.7,
+    });
+    const chairMat = new THREE.MeshStandardMaterial({
+      color: 0x475569,
+      roughness: 0.8,
+    });
+    const whiteMat = new THREE.MeshStandardMaterial({
+      color: 0xf8fafc,
+      roughness: 0.9,
+    });
+
+    if (type === "meeting") {
+      // Large conference table + chairs + whiteboard on back wall
+      const tableW = Math.min(r.w * 0.7, 3.5);
+      const tableD = Math.min(r.d * 0.45, 1.8);
+      const table = new THREE.Mesh(
+        new THREE.BoxGeometry(tableW, 0.75, tableD),
+        tableMat,
+      );
+      table.position.set(r.cx, 0.375, r.cz);
+      table.castShadow = true;
+      table.receiveShadow = true;
+      scene.add(table);
+      // Chairs around table (6)
+      [0, 1, 2, 3, 4, 5].forEach((i) => {
+        const angle = (i / 6) * Math.PI * 2;
+        const rad = Math.max(tableW, tableD) * 0.5 + 0.35;
+        const chairSeat = new THREE.Mesh(
+          new THREE.BoxGeometry(0.4, 0.45, 0.4),
+          chairMat,
+        );
+        const chairBack = new THREE.Mesh(
+          new THREE.BoxGeometry(0.4, 0.35, 0.08),
+          chairMat,
+        );
+        chairBack.position.y = 0.575;
+        chairBack.position.z = -0.22;
+        const chair = new THREE.Group();
+        chair.add(chairSeat);
+        chair.add(chairBack);
+        chair.position.set(
+          r.cx + Math.sin(angle) * rad,
+          0,
+          r.cz + Math.cos(angle) * rad,
+        );
+        chair.rotation.y = -angle;
+        chair.traverse((c) => {
+          if (c instanceof THREE.Mesh) {
+            c.castShadow = true;
+            c.receiveShadow = true;
+          }
+        });
+        scene.add(chair);
+      });
+      // Whiteboard on wall opposite door (back of room)
+      const boardZ = r.door === "n" ? r.cz + hd - 0.3 : r.door === "s" ? r.cz - hd + 0.3 : r.cz;
+      const boardX = r.door === "e" ? r.cx - hw + 0.3 : r.door === "w" ? r.cx + hw - 0.3 : r.cx;
+      const whiteboard = new THREE.Mesh(
+        new THREE.PlaneGeometry(r.w * 0.5, 1.2),
+        whiteMat,
+      );
+      whiteboard.position.set(boardX, 1.5, boardZ);
+      if (r.door === "n") whiteboard.rotation.y = 0;
+      if (r.door === "s") whiteboard.rotation.y = Math.PI;
+      if (r.door === "e") whiteboard.rotation.y = Math.PI / 2;
+      if (r.door === "w") whiteboard.rotation.y = -Math.PI / 2;
+      scene.add(whiteboard);
+    } else if (type === "breakroom") {
+      // Counter along wall, water cooler, wall screen
+      const counterW = r.w * 0.7;
+      const counter = new THREE.Mesh(
+        new THREE.BoxGeometry(counterW, 1, 0.5),
+        whiteMat,
+      );
+      counter.position.set(r.cx, 0.5, r.cz - hd + 0.4);
+      counter.castShadow = true;
+      scene.add(counter);
+      const cooler = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.25, 0.28, 0.9, 12),
+        new THREE.MeshStandardMaterial({ color: 0x94a3b8 }),
+      );
+      cooler.position.set(r.cx + hw * 0.4, 0.45, r.cz - hd + 0.4);
+      cooler.castShadow = true;
+      scene.add(cooler);
+      const screen = new THREE.Mesh(
+        new THREE.BoxGeometry(1.2, 0.7, 0.05),
+        new THREE.MeshStandardMaterial({ color: 0x1e293b }),
+      );
+      screen.position.set(r.cx - hw * 0.3, 1.6, r.cz - hd + 0.25);
+      scene.add(screen);
+      // Small table in center
+      const table = new THREE.Mesh(
+        new THREE.BoxGeometry(1.2, 0.75, 0.8),
+        tableMat,
+      );
+      table.position.set(r.cx, 0.375, r.cz);
+      table.castShadow = true;
+      scene.add(table);
+    } else if (type === "cubicles") {
+      // 3 cubicle desks in a row: desk + monitor + chair
+      const deskW = 1.2;
+      const deskD = 0.7;
+      [-1, 0, 1].forEach((i) => {
+        const dx = r.cx + i * (deskW + 0.3);
+        const desk = new THREE.Mesh(
+          new THREE.BoxGeometry(deskW, 0.75, deskD),
+          tableMat,
+        );
+        desk.position.set(dx, 0.375, r.cz);
+        desk.castShadow = true;
+        scene.add(desk);
+        const monitor = new THREE.Mesh(
+          new THREE.BoxGeometry(0.5, 0.35, 0.03),
+          new THREE.MeshStandardMaterial({ color: 0x334155 }),
+        );
+        monitor.position.set(dx, 0.95, r.cz);
+        scene.add(monitor);
+        const chair = new THREE.Mesh(
+          new THREE.BoxGeometry(0.45, 0.5, 0.45),
+          chairMat,
+        );
+        chair.position.set(dx, 0.25, r.cz + deskD * 0.5 + 0.25);
+        chair.castShadow = true;
+        scene.add(chair);
+      });
+    } else {
+      // Open: single table
+      const tableW = Math.min(r.w * 0.5, 2.2);
+      const tableD = Math.min(r.d * 0.4, 1.2);
+      const table = new THREE.Mesh(
+        new THREE.BoxGeometry(tableW, 0.8, tableD),
+        tableMat,
+      );
+      table.position.set(r.cx, 0.4, r.cz);
+      table.castShadow = true;
+      scene.add(table);
+    }
+  }
 }
 
 function useKeyboardMovement(
   onMove: (x: number, z: number, direction: Direction) => void,
+  layoutDataRef: React.MutableRefObject<LayoutData>,
 ) {
   const keys = useRef({ w: false, a: false, s: false, d: false });
   const lastSend = useRef(0);
@@ -210,7 +578,7 @@ function useKeyboardMovement(
         let { x, z } = pos.current;
         x = Math.max(-FLOOR_W / 2 + 1, Math.min(FLOOR_W / 2 - 1, x + dx));
         z = Math.max(-FLOOR_D / 2 + 1, Math.min(FLOOR_D / 2 - 1, z + dz));
-        const collided = checkCollision(x, z, 0.4);
+        const collided = checkCollision(x, z, 0.4, layoutDataRef.current);
         pos.current = { x: collided.x, z: collided.z };
         const now = Date.now();
         if (now - lastSend.current >= MOVE_THROTTLE_MS) {
@@ -235,6 +603,8 @@ export default function Office() {
     spaceName?: string;
   } | null;
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
+  const nameLabelRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -252,7 +622,7 @@ export default function Office() {
   const cameraTargetRef = useRef({ x: 0, z: 0 });
   const cameraDistanceRef = useRef(16);
   const cameraAngleHRef = useRef(0);
-  const cameraAngleVRef = useRef(0.45);
+  const cameraAngleVRef = useRef(0.38);
   const isPointerDownRef = useRef(false);
   const lastPointerRef = useRef({ x: 0, y: 0 });
 
@@ -274,7 +644,34 @@ export default function Office() {
   const [videoMenuOpen, setVideoMenuOpen] = useState(false);
   const lastMeetingZoneRef = useRef<string | null>(null);
 
+  // Office layout from API (per space); fallback to default
+  const [layout, setLayout] = useState<OfficeLayout>(() => DEFAULT_OFFICE_LAYOUT);
+  const layoutDataRef = useRef<LayoutData>(
+    buildLayoutData(DEFAULT_OFFICE_LAYOUT),
+  );
+
   const hasSpace = state?.spaceId && state?.spaceName;
+
+  // Fetch office layout when entering a space
+  useEffect(() => {
+    if (!state?.spaceId) return;
+    api
+      .get<{ layout: OfficeLayout | null }>(`/spaces/${state.spaceId}/layout`)
+      .then((res) => {
+        const next =
+          res.data.layout && typeof res.data.layout === "object"
+            ? (res.data.layout as OfficeLayout)
+            : DEFAULT_OFFICE_LAYOUT;
+        setLayout(next);
+      })
+      .catch(() => setLayout(DEFAULT_OFFICE_LAYOUT));
+  }, [state?.spaceId]);
+
+  // Keep layout data ref in sync for collision / meeting zone
+  useEffect(() => {
+    layoutDataRef.current = buildLayoutData(layout);
+  }, [layout]);
+
   useEffect(() => {
     if (!hasSpace && location.pathname === "/office") {
       navigate("/dashboard", { replace: true });
@@ -297,7 +694,7 @@ export default function Office() {
     }
   }, []);
 
-  useKeyboardMovement(emitMove);
+  useKeyboardMovement(emitMove, layoutDataRef);
 
   useEffect(() => {
     if (!state?.spaceId || !state?.spaceName || !canvasRef.current || !user)
@@ -607,11 +1004,24 @@ export default function Office() {
     addWall(-hw, 0, 1, FLOOR_D + 2);
     addWall(hw, 0, 1, FLOOR_D + 2);
 
+    // 3D meeting rooms (Gather.town style): walls with doors + room floors
+    const roomWallMat = new THREE.MeshStandardMaterial({
+      color: 0x64748b,
+      roughness: 0.75,
+    });
+    const roomFloorMat = new THREE.MeshStandardMaterial({
+      color: 0x1e3a5f,
+      roughness: 0.9,
+      metalness: 0.05,
+    });
+    const roomDefs = layout.rooms ?? [];
+    addRoomMeshes(scene, roomDefs, roomWallMat, roomFloorMat);
+
     const deskMat = new THREE.MeshStandardMaterial({
       color: 0x78716c,
       roughness: 0.7,
     });
-    DESKS.forEach(([cx, cz, hw, hd]) => {
+    (layout.desks ?? []).forEach(([cx, cz, hw, hd]) => {
       const desk = new THREE.Mesh(
         new THREE.BoxGeometry(hw * 2, 1, hd * 2),
         deskMat,
@@ -622,27 +1032,16 @@ export default function Office() {
       scene.add(desk);
     });
 
-    const selfGroup = createCharacterMesh(0x22c55e, true);
+    const selfGroup = createCharacterMesh(
+      0x22c55e,
+      true,
+      user?.displayName ?? "You",
+    );
     selfGroup.position.set(0, 0, 0);
     scene.add(selfGroup);
     selfGroupRef.current = selfGroup;
 
-    MEETING_ZONES.forEach(([cx, cz, hw, hd]) => {
-      const zoneMat = new THREE.MeshStandardMaterial({
-        color: 0x2563eb,
-        transparent: true,
-        opacity: 0.35,
-        roughness: 0.9,
-      });
-      const zoneFloor = new THREE.Mesh(
-        new THREE.PlaneGeometry(hw * 2, hd * 2),
-        zoneMat,
-      );
-      zoneFloor.rotation.x = -Math.PI / 2;
-      zoneFloor.position.set(cx, 0.02, cz);
-      scene.add(zoneFloor);
-    });
-
+    const tempVec = new THREE.Vector3();
     const canvas = canvasRef.current;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -697,7 +1096,7 @@ export default function Office() {
       raf = requestAnimationFrame(animate);
       const { x, z } = myPosRef.current;
       const dir = myDirRef.current;
-      const zone = isInMeetingZone(x, z);
+      const zone = isInMeetingZone(x, z, layoutDataRef.current.roomDefs);
       if ((zone?.roomId ?? null) !== lastMeetingZoneRef.current) {
         lastMeetingZoneRef.current = zone?.roomId ?? null;
         setMeetingZone(zone);
@@ -706,6 +1105,28 @@ export default function Office() {
       if (selfGroupRef.current) {
         selfGroupRef.current.position.set(x, 0, z);
         selfGroupRef.current.rotation.y = directionToAngle(dir);
+      }
+
+      // Name label above player (Sky Office style)
+      if (
+        nameLabelRef.current &&
+        canvasContainerRef.current &&
+        selfGroupRef.current &&
+        cameraRef.current
+      ) {
+        tempVec.setFromMatrixPosition(selfGroupRef.current.matrixWorld);
+        tempVec.y += 1.45;
+        tempVec.project(cameraRef.current);
+        const rect = canvasContainerRef.current.getBoundingClientRect();
+        const px = (tempVec.x * 0.5 + 0.5) * rect.width;
+        const py = (1 - (tempVec.y * 0.5 + 0.5)) * rect.height;
+        if (tempVec.z <= 1 && rect.width > 0) {
+          nameLabelRef.current.style.display = "block";
+          nameLabelRef.current.style.left = `${px}px`;
+          nameLabelRef.current.style.top = `${py}px`;
+        } else {
+          nameLabelRef.current.style.display = "none";
+        }
       }
 
       cameraTargetRef.current.x +=
@@ -791,7 +1212,7 @@ export default function Office() {
       rendererRef.current = null;
       selfGroupRef.current = null;
     };
-  }, [state?.spaceId]);
+  }, [state?.spaceId, layout, user?.displayName]);
 
   useEffect(() => {
     const scene = sceneRef.current;
@@ -815,7 +1236,11 @@ export default function Office() {
     });
     others.forEach((u, socketId) => {
       if (!existing.has(socketId)) {
-        const group = createCharacterMesh(0xf97316, false);
+        const group = createCharacterMesh(
+          0xf97316,
+          false,
+          u.displayName ?? "Guest",
+        );
         group.position.set(u.x, 0, u.z);
         scene.add(group);
         existing.set(socketId, group);
@@ -895,12 +1320,19 @@ export default function Office() {
           </Link>
         </nav>
       </header>
-      <div className="relative flex-1">
+      <div ref={canvasContainerRef} className="relative flex-1">
         <canvas
           ref={canvasRef}
           className="block h-full w-full"
           style={{ width: "100%", height: "100%", minHeight: "400px" }}
         />
+        <div
+          ref={nameLabelRef}
+          className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full whitespace-nowrap text-sm font-medium text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]"
+          style={{ display: "none" }}
+        >
+          {user?.displayName ?? "You"}
+        </div>
         <div className="absolute bottom-4 left-4 flex flex-col gap-2">
           <div className="rounded-lg border border-white/20 bg-black/70 px-4 py-2 font-mono text-sm text-white shadow-lg">
             <span className="text-emerald-400">WASD</span> or{" "}
@@ -911,9 +1343,9 @@ export default function Office() {
           </div>
           {!inCall && (
             <p className="text-xs text-white/80">
-              <span className="font-medium text-blue-300">Blue zones</span> =
-              meeting rooms · Or use{" "}
-              <span className="font-medium text-blue-300">Video call</span> in
+              Walk into <span className="font-medium text-sky-300">3D rooms</span> to
+              join meetings · Or use{" "}
+              <span className="font-medium text-sky-300">Video call</span> in
               header
             </p>
           )}
