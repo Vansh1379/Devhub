@@ -18,13 +18,14 @@ function dmChannelId(userId1: string, userId2: string): string {
 
 const MAX_CHAT_CONTENT_LENGTH = 2000;
 
-// Phase 3: movement bounds (match frontend floor size)
-const FLOOR_HALF = 17.5;
+// Phase 3 (2D): tile coordinate bounds (MAP_W=40, MAP_H=32)
+const MAP_W = 40;
+const MAP_H = 32;
 
 function clampPosition(x: number, z: number): { x: number; z: number } {
   return {
-    x: Math.max(-FLOOR_HALF, Math.min(FLOOR_HALF, x)),
-    z: Math.max(-FLOOR_HALF, Math.min(FLOOR_HALF, z)),
+    x: Math.max(0, Math.min(MAP_W - 1, Math.round(x))),
+    z: Math.max(0, Math.min(MAP_H - 1, Math.round(z))),
   };
 }
 
