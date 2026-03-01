@@ -336,6 +336,15 @@ export class OfficeScene extends Phaser.Scene {
   private moveTimer = 0;
   private readonly MOVE_DELAY = 140; // ms between moves
 
+  // Zoom — canvas fills screen, camera zoom controls how much map is visible
+  private targetZoom = 1;
+  private zoomMin = 0.3;           // recalculated on create/resize to fit full map
+  private readonly ZOOM_MAX = 2.0; // max: ~2 rooms visible, not too close
+  private readonly ZOOM_LERP = 0.12;
+
+  // Pinch tracking
+  private pinchDist: number | null = null;
+
   // Callbacks (set from React)
   onMove?: MoveCallback;
   onZoneChange?: ZoneCallback;
@@ -351,17 +360,28 @@ export class OfficeScene extends Phaser.Scene {
     if (this.selfLabel) this.selfLabel.setText(name);
   }
 
+  // Returns the zoom level that makes the entire map just fit the viewport
+  private calcZoomToFit(): number {
+    const vw = this.scale.width;
+    const vh = this.scale.height;
+    const zx = vw / (MAP_W * TILE);
+    const zy = vh / (MAP_H * TILE);
+    return Math.min(zx, zy);
+  }
+
   create() {
     const { floor, objects } = buildMap();
     this.floorMap = floor;
     this.objMap = objects;
 
-    // Camera world bounds
-    this.cameras.main.setBounds(
-      0, 0,
-      MAP_W * TILE,
-      MAP_H * TILE
-    );
+    // Camera world bounds = full map
+    this.cameras.main.setBounds(0, 0, MAP_W * TILE, MAP_H * TILE);
+
+    // Recalculate zoom limits when the game is resized
+    this.scale.on("resize", () => {
+      this.zoomMin = this.calcZoomToFit();
+      this.targetZoom = Phaser.Math.Clamp(this.targetZoom, this.zoomMin, this.ZOOM_MAX);
+    });
 
     // Graphics layers
     this.tileGfx = this.add.graphics();
@@ -394,6 +414,59 @@ export class OfficeScene extends Phaser.Scene {
     // Camera follow
     this.cameras.main.startFollow(this.selfSprite, true, 0.08, 0.08);
 
+    // Set initial zoom: fit the whole map in view (zoom-to-fit)
+    this.zoomMin = this.calcZoomToFit();
+    this.targetZoom = this.zoomMin;  // start fully zoomed out
+    this.cameras.main.setZoom(this.targetZoom);
+
+    // ── Zoom: mouse wheel ────────────────────────────────────────────────────
+    this.input.on(
+      "wheel",
+      (
+        _ptr: Phaser.Input.Pointer,
+        _objs: unknown,
+        _dx: number,
+        dy: number
+      ) => {
+        const factor = dy > 0 ? 0.9 : 1.1;
+        this.targetZoom = Phaser.Math.Clamp(
+          this.targetZoom * factor,
+          this.zoomMin,
+          this.ZOOM_MAX
+        );
+      }
+    );
+
+    // ── Zoom: pinch (touch / trackpad) ───────────────────────────────────────
+    this.input.on("pointermove", (ptr: Phaser.Input.Pointer) => {
+      // Phaser tracks active pointers; check if 2 are down
+      const p1 = this.input.pointer1;
+      const p2 = this.input.pointer2;
+      if (p1.isDown && p2.isDown) {
+        const dx = p1.x - p2.x;
+        const dy2 = p1.y - p2.y;
+        const dist = Math.sqrt(dx * dx + dy2 * dy2);
+        if (this.pinchDist !== null) {
+          const ratio = dist / this.pinchDist;
+          this.targetZoom = Phaser.Math.Clamp(
+            this.targetZoom * ratio,
+            this.zoomMin,
+            this.ZOOM_MAX
+          );
+        }
+        this.pinchDist = dist;
+        void ptr; // suppress unused warning
+      } else {
+        this.pinchDist = null;
+      }
+    });
+
+    // ── Zoom: keyboard + / - ─────────────────────────────────────────────────
+    this.input.keyboard!.on("keydown-PLUS",  () => { this.zoomBy(1.15); });
+    this.input.keyboard!.on("keydown-MINUS", () => { this.zoomBy(0.87); });
+    this.input.keyboard!.on("keydown-EQUAL", () => { this.zoomBy(1.15); }); // = without shift
+    this.input.keyboard!.on("keydown-ZERO",  () => { this.zoomToFit(); }); // reset to fit
+
     // Input
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.wasd = {
@@ -402,6 +475,27 @@ export class OfficeScene extends Phaser.Scene {
       left: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.A),
       right: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.D),
     };
+  }
+
+  // Public zoom control (called from React buttons)
+  zoomBy(factor: number) {
+    this.targetZoom = Phaser.Math.Clamp(
+      this.targetZoom * factor,
+      this.zoomMin,
+      this.ZOOM_MAX
+    );
+  }
+
+  zoomTo(value: number) {
+    this.targetZoom = Phaser.Math.Clamp(value, this.zoomMin, this.ZOOM_MAX);
+  }
+
+  zoomToFit() {
+    this.targetZoom = this.calcZoomToFit();
+  }
+
+  getZoom(): number {
+    return this.cameras.main.zoom;
   }
 
   // ── Drawing helpers ─────────────────────────────────────────────────────────
@@ -751,6 +845,14 @@ export class OfficeScene extends Phaser.Scene {
 
   // ── Game loop ───────────────────────────────────────────────────────────────
   update(_time: number, delta: number) {
+    // Smooth zoom lerp every frame
+    const currentZoom = this.cameras.main.zoom;
+    if (Math.abs(currentZoom - this.targetZoom) > 0.001) {
+      this.cameras.main.setZoom(
+        currentZoom + (this.targetZoom - currentZoom) * this.ZOOM_LERP
+      );
+    }
+
     this.moveTimer += delta;
     if (this.moveTimer < this.MOVE_DELAY) {
       // Still interpolate others

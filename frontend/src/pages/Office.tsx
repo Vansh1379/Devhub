@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DyteCallView } from "@/components/DyteCallView";
 import { OfficeScene, OtherPlayer } from "@/game/OfficeScene";
+import { GameSkyBackground } from "@/components/GameSkyBackground";
 
 export interface ChatMessagePayload {
   id: string;
@@ -76,7 +77,7 @@ export default function Office() {
       parent: containerRef.current,
       width: containerRef.current.clientWidth || window.innerWidth,
       height: containerRef.current.clientHeight || window.innerHeight,
-      backgroundColor: "#1a1a2e",
+      transparent: true,   // sky bg shows through when map < viewport
       scene: officeScene,
       pixelArt: true,
       antialias: false,
@@ -112,18 +113,7 @@ export default function Office() {
       setMeetingZone(zone);
     };
 
-    // Resize handler
-    const onResize = () => {
-      if (!containerRef.current) return;
-      game.scale.resize(
-        containerRef.current.clientWidth,
-        containerRef.current.clientHeight
-      );
-    };
-    window.addEventListener("resize", onResize);
-
     return () => {
-      window.removeEventListener("resize", onResize);
       game.destroy(true);
       gameRef.current = null;
       sceneRef.current = null;
@@ -368,9 +358,12 @@ export default function Office() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#1a1a2e]">
+    <div className="flex min-h-screen flex-col">
+      {/* Animated sky background — sits behind everything */}
+      <GameSkyBackground variant="full" moon />
+
       {/* Header */}
-      <header className="flex items-center justify-between border-b border-border bg-card px-4 py-2">
+      <header className="relative z-10 flex items-center justify-between border-b border-border bg-card/80 backdrop-blur-sm px-4 py-2">
         <h2 className="text-lg font-semibold tracking-tight text-foreground">
           Office — {state.spaceName}
         </h2>
@@ -433,16 +426,18 @@ export default function Office() {
         </nav>
       </header>
 
-      {/* Game area */}
-      <div className="relative flex-1 overflow-hidden">
-        {/* Phaser canvas container */}
+      {/* Game area — canvas fills screen, sky visible through transparent canvas */}
+      <div className="relative z-10 flex-1">
+        {/* Phaser canvas fills the entire game area */}
         <div ref={containerRef} className="absolute inset-0" />
 
         {/* HUD: controls hint */}
         <div className="pointer-events-none absolute bottom-4 left-4 z-10">
           <div className="rounded-lg border border-white/20 bg-black/70 px-4 py-2 font-mono text-sm text-white shadow-lg">
             <span className="text-emerald-400">WASD</span> or{" "}
-            <span className="text-emerald-400">↑↓←→</span> to move
+            <span className="text-emerald-400">↑↓←→</span> move ·{" "}
+            <span className="text-sky-300">Scroll</span> or{" "}
+            <span className="text-sky-300">+/-</span> zoom
           </div>
           {!inCall && (
             <p className="mt-1 text-xs text-white/70">
@@ -451,6 +446,34 @@ export default function Office() {
               <span className="font-medium text-blue-300">E</span> to join call
             </p>
           )}
+        </div>
+
+        {/* Zoom buttons */}
+        <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-1">
+          <button
+            type="button"
+            className="flex h-8 w-8 items-center justify-center rounded border border-white/20 bg-black/70 text-white shadow-lg hover:bg-black/90 active:scale-95 transition-transform text-lg font-bold leading-none"
+            onClick={() => sceneRef.current?.zoomBy(1.25)}
+            title="Zoom in (+)"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            className="flex h-8 w-8 items-center justify-center rounded border border-white/20 bg-black/70 text-white shadow-lg hover:bg-black/90 active:scale-95 transition-transform text-lg font-bold leading-none"
+            onClick={() => sceneRef.current?.zoomToFit()}
+            title="Reset zoom (0)"
+          >
+            ⊙
+          </button>
+          <button
+            type="button"
+            className="flex h-8 w-8 items-center justify-center rounded border border-white/20 bg-black/70 text-white shadow-lg hover:bg-black/90 active:scale-95 transition-transform text-lg font-bold leading-none"
+            onClick={() => sceneRef.current?.zoomBy(0.8)}
+            title="Zoom out (-)"
+          >
+            −
+          </button>
         </div>
 
         {/* Meeting zone prompt */}
