@@ -989,7 +989,6 @@ export default function Office() {
       color: 0x475569,
       roughness: 0.8,
     });
-    const wallGeo = new THREE.BoxGeometry(1, WALL_H, 1);
     const addWall = (x: number, z: number, w: number, d: number) => {
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, WALL_H, d), wallMat);
       mesh.position.set(x, WALL_H / 2, z);
