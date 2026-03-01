@@ -75,38 +75,50 @@ export default function Office() {
     const game = new Phaser.Game({
       type: Phaser.AUTO,
       parent: containerRef.current,
-      width: containerRef.current.clientWidth || window.innerWidth,
-      height: containerRef.current.clientHeight || window.innerHeight,
-      transparent: true,   // sky bg shows through when map < viewport
+      backgroundColor: "#93cbee",
       scene: officeScene,
       pixelArt: true,
       antialias: false,
+      physics: {
+        default: "arcade",
+        arcade: { gravity: { x: 0, y: 0 }, debug: false },
+      },
       scale: {
         mode: Phaser.Scale.RESIZE,
-        autoCenter: Phaser.Scale.CENTER_BOTH,
+        width: containerRef.current.clientWidth || window.innerWidth,
+        height: containerRef.current.clientHeight || window.innerHeight,
       },
     });
     gameRef.current = game;
 
-    // Wait a tick for the scene to be fully created, then set display name
+    // Set display name once scene is ready
     setTimeout(() => {
       officeScene.setDisplayName(user.displayName ?? "You");
-      officeScene.teleportSelf(8, 15, "down");
-    }, 100);
+    }, 200);
 
-    // Movement callback → socket
-    officeScene.onMove = (tx: number, ty: number, direction: string) => {
+    // Movement callback → socket (worldX, worldY, animKey)
+    officeScene.onMove = (worldX: number, worldY: number, animKey: string) => {
       const socket = socketRef.current;
       const spaceId = spaceIdRef.current;
       if (socket && spaceId) {
         socket.emit("move", {
           spaceId,
-          x: tx,
+          x: Math.round(worldX),
           y: 0,
-          z: ty,
-          direction,
+          z: Math.round(worldY),  // y in world = z in our backend convention
+          direction: animKey,     // full anim key e.g. "adam_run_right"
         });
       }
+    };
+
+    officeScene.onZoneChange = (zone) => {
+      setMeetingZone(zone);
+    };
+
+    return () => {
+      game.destroy(true);
+      gameRef.current = null;
+      sceneRef.current = null;
     };
 
     officeScene.onZoneChange = (zone) => {
@@ -142,10 +154,10 @@ export default function Office() {
       socket.emit("join_space", {
         spaceId: state.spaceId,
         displayName: user.displayName,
-        x: 8,
+        x: 705,
         y: 0,
-        z: 15,
-        direction: "down",
+        z: 500,
+        direction: "adam_idle_down",
       });
     });
 

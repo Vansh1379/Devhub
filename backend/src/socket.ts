@@ -18,14 +18,14 @@ function dmChannelId(userId1: string, userId2: string): string {
 
 const MAX_CHAT_CONTENT_LENGTH = 2000;
 
-// Phase 3 (2D): tile coordinate bounds (MAP_W=40, MAP_H=32)
-const MAP_W = 40;
-const MAP_H = 32;
+// Pixel-space bounds for the SkyOffice Tiled map (40×30 tiles × 32px = 1280×960)
+const MAP_PX_W = 1280;
+const MAP_PX_H = 960;
 
 function clampPosition(x: number, z: number): { x: number; z: number } {
   return {
-    x: Math.max(0, Math.min(MAP_W - 1, Math.round(x))),
-    z: Math.max(0, Math.min(MAP_H - 1, Math.round(z))),
+    x: Math.max(0, Math.min(MAP_PX_W, x)),
+    z: Math.max(0, Math.min(MAP_PX_H, z)),
   };
 }
 
