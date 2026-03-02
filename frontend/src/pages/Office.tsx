@@ -7,8 +7,10 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DyteCallView } from "@/components/DyteCallView";
-import { OfficeScene, OtherPlayer } from "@/game/OfficeScene";
+import { OfficeScene, OtherPlayer, RoomInstance } from "@/game/OfficeScene";
+import { RoomType } from "@/game/RoomManager";
 import { GameSkyBackground } from "@/components/GameSkyBackground";
+import { AddRoomModal } from "@/components/AddRoomModal";
 
 export interface ChatMessagePayload {
   id: string;
@@ -48,6 +50,10 @@ export default function Office() {
   const [chatTab, setChatTab] = useState<"space" | "dm">("space");
   const [dmWithUserId, setDmWithUserId] = useState<string | null>(null);
   const chatListRef = useRef<HTMLDivElement>(null);
+
+  // Room management
+  const [addRoomOpen, setAddRoomOpen] = useState(false);
+  const [rooms, setRooms] = useState<RoomInstance[]>([]);
 
   // Meeting / video state
   const [meetingZone, setMeetingZone] = useState<{ roomId: string } | null>(null);
@@ -115,14 +121,8 @@ export default function Office() {
       setMeetingZone(zone);
     };
 
-    return () => {
-      game.destroy(true);
-      gameRef.current = null;
-      sceneRef.current = null;
-    };
-
-    officeScene.onZoneChange = (zone) => {
-      setMeetingZone(zone);
+    officeScene.onRoomsChanged = (updatedRooms) => {
+      setRooms([...updatedRooms]);
     };
 
     return () => {
@@ -423,6 +423,14 @@ export default function Office() {
               )}
             </div>
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setAddRoomOpen(true)}
+            className="gap-1.5"
+          >
+            <span className="text-base leading-none">+</span> Add Room
+          </Button>
           <Link
             to="/"
             className="text-primary underline-offset-4 hover:underline text-sm"
@@ -437,6 +445,16 @@ export default function Office() {
           </Link>
         </nav>
       </header>
+
+      {/* Add Room Modal */}
+      {addRoomOpen && (
+        <AddRoomModal
+          onAdd={(type: RoomType, name: string) => {
+            sceneRef.current?.addRoom(type, name);
+          }}
+          onClose={() => setAddRoomOpen(false)}
+        />
+      )}
 
       {/* Game area — canvas fills screen, sky visible through transparent canvas */}
       <div className="relative z-10 flex-1">

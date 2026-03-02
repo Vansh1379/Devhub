@@ -1,4 +1,9 @@
 import Phaser from 'phaser'
+import { RoomManager } from './RoomManager'
+import type { RoomType, RoomInstance } from './RoomManager'
+import { ROOM_CONFIGS } from './RoomManager'
+export type { RoomType, RoomInstance } from './RoomManager'
+export { ROOM_CONFIGS } from './RoomManager'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 export const CHARACTERS = ['adam', 'ash', 'lucy', 'nancy'] as const
@@ -98,9 +103,15 @@ export class OfficeScene extends Phaser.Scene {
   private mapH = 960
   private isFollowing = true
 
+  // dynamic rooms
+  private roomManager!: RoomManager
+  private roomIdCounter = 0
+  private groundLayer!: Phaser.Tilemaps.TilemapLayer
+
   // callbacks
   onMove?: MoveCallback
   onZoneChange?: ZoneCallback
+  onRoomsChanged?: (rooms: RoomInstance[]) => void
 
   private lastZoneId: string | null = null
 
@@ -144,8 +155,9 @@ export class OfficeScene extends Phaser.Scene {
 
     const map = this.make.tilemap({ key: 'tilemap' })
     const floorTs = map.addTilesetImage('FloorAndGround', 'tiles_wall')!
-    const groundLayer = map.createLayer('Ground', floorTs)!
-    groundLayer.setCollisionByProperty({ collides: true })
+    this.groundLayer = map.createLayer('Ground', floorTs)!
+    this.groundLayer.setCollisionByProperty({ collides: true })
+    const groundLayer = this.groundLayer
 
     // Static object layers
     const vendGroup = this.buildObjectLayer(map, 'Wall',                 'tiles_wall','FloorAndGround',false)
@@ -180,7 +192,10 @@ export class OfficeScene extends Phaser.Scene {
     this.mapW = map.widthInPixels
     this.mapH = map.heightInPixels
 
-    // Physics bounds (keeps player inside map)
+    // Dynamic room manager (renders custom rooms below the Tiled map)
+    this.roomManager = new RoomManager(this)
+
+    // Physics world starts at map size, expands as rooms are added
     this.physics.world.setBounds(0, 0, this.mapW, this.mapH)
 
     // Camera — NO setBounds so we can freely center the map
@@ -248,6 +263,56 @@ export class OfficeScene extends Phaser.Scene {
   }
 
   // ── Public zoom API ──────────────────────────────────────────────────────
+  // ── Dynamic Room API (called from React) ──────────────────────────────────
+  addRoom(type: RoomType, name: string): RoomInstance {
+    const id   = `dyn_${++this.roomIdCounter}`
+    const room = this.roomManager.addRoom(id, name, type)
+    const cor  = room.corridor
+
+    // ── Punch a walkable corridor through the Tiled right-wall collision ──
+    // 1. Remove collision tiles in the ground layer at the corridor passage
+    if (this.groundLayer) {
+      const tileSize = 32
+      const startTileX = Math.floor(cor.x / tileSize)
+      const endTileX   = Math.floor((cor.x + cor.w) / tileSize)
+      const startTileY = Math.floor(cor.y / tileSize)
+      const endTileY   = Math.ceil((cor.y + cor.h) / tileSize)
+      for (let tx = startTileX; tx <= endTileX; tx++) {
+        for (let ty = startTileY; ty < endTileY; ty++) {
+          const tile = this.groundLayer.getTileAt(tx, ty)
+          if (tile) tile.setCollision(false, false, false, false)
+        }
+      }
+    }
+
+    // 2. Add a static transparent zone in the room's walkable area so the
+    //    player's collideWorldBounds doesn't trap them at MAP_W boundary
+    this.physics.world.setBounds(0, 0, 99999, 99999)  // temporarily unlimited
+    this.selfSprite?.setCollideWorldBounds(false)      // disable world bounds clamp
+
+    // Expand physics + camera world
+    const bounds = this.roomManager.getWorldBounds()
+    this.physics.world.setBounds(0, 0, bounds.w + 512, bounds.h + 512)
+
+    // Update map size so zoom-to-fit recalculates correctly
+    this.mapW = bounds.w
+    this.mapH = Math.max(this.mapH, bounds.h)
+    this.zoomFit    = this.calcZoomFit()
+    this.targetZoom = this.zoomFit
+
+    this.onRoomsChanged?.(this.roomManager.getRooms())
+    return room
+  }
+
+  renameRoom(id: string, newName: string) {
+    this.roomManager.renameRoom(id, newName)
+    this.onRoomsChanged?.(this.roomManager.getRooms())
+  }
+
+  getRooms(): RoomInstance[] {
+    return this.roomManager?.getRooms() ?? []
+  }
+
   zoomBy(f: number) { this.targetZoom = Phaser.Math.Clamp(this.targetZoom * f, this.zoomFit, ZOOM_MAX) }
   zoomTo(v: number) { this.targetZoom = Phaser.Math.Clamp(v, this.zoomFit, ZOOM_MAX) }
   zoomToFit()       { this.targetZoom = this.zoomFit }
@@ -398,12 +463,17 @@ export class OfficeScene extends Phaser.Scene {
     if (vx !== 0 || vy !== 0)
       this.onMove?.(this.selfSprite.x, this.selfSprite.y, newAnim)
 
-    // Meeting zone
-    const zone = getZoneAt(this.selfSprite.x, this.selfSprite.y)
-    const zoneId = zone?.roomId ?? null
+    // Meeting zone: check static Tiled zones first, then dynamic rooms
+    const staticZone = getZoneAt(this.selfSprite.x, this.selfSprite.y)
+    const dynRoom    = this.roomManager?.getRoomAt(this.selfSprite.x, this.selfSprite.y)
+    const dynZone    = dynRoom && ROOM_CONFIGS[dynRoom.type].isMeetingZone
+      ? { roomId: dynRoom.id }
+      : null
+    const zone    = staticZone ?? dynZone
+    const zoneId  = zone?.roomId ?? null
     if (zoneId !== this.lastZoneId) {
       this.lastZoneId = zoneId
-      this.onZoneChange?.(zone ? { roomId: zone.roomId } : null)
+      this.onZoneChange?.(zone ?? null)
     }
 
     // Interpolate other players
