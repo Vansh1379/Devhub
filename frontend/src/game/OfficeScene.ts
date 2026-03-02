@@ -4,11 +4,9 @@ import Phaser from 'phaser'
 export const CHARACTERS = ['adam', 'ash', 'lucy', 'nancy'] as const
 export type CharacterName = (typeof CHARACTERS)[number]
 
-const SPEED        = 200
-const ZOOM_DEFAULT = 1.5
-const ZOOM_MIN     = 0.6
-const ZOOM_MAX     = 2.5
-const ZOOM_LERP    = 0.1
+const SPEED      = 200
+const ZOOM_MAX   = 2.5
+const ZOOM_LERP  = 0.1
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 export interface OtherPlayer {
@@ -90,9 +88,15 @@ export class OfficeScene extends Phaser.Scene {
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys
   private wasd!: { W: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key }
 
-  // zoom
-  private targetZoom = ZOOM_DEFAULT
+  // zoom — starts at zoom-to-fit, updated in create()
+  private targetZoom = 1
+  private zoomFit    = 1   // zoom that makes the full map fill the screen width
   private pinchDist: number | null = null
+
+  // map dimensions (set in create)
+  private mapW = 1280
+  private mapH = 960
+  private isFollowing = true
 
   // callbacks
   onMove?: MoveCallback
@@ -125,6 +129,13 @@ export class OfficeScene extends Phaser.Scene {
     this.load.spritesheet('vendingmachines','/assets/items/vendingmachine.png',{ frameWidth:48, frameHeight:72 })
     for (const char of CHARACTERS)
       this.load.spritesheet(char, `/assets/character/${char}.png`, { frameWidth:32, frameHeight:48 })
+  }
+
+  // Zoom that makes the full map fit entirely inside the viewport (both axes)
+  private calcZoomFit(): number {
+    const zx = this.scale.width  / this.mapW
+    const zy = this.scale.height / this.mapH
+    return Math.min(zx, zy) * 0.96 // 4% padding so edges don't clip
   }
 
   // ── Create ───────────────────────────────────────────────────────────────
@@ -165,11 +176,27 @@ export class OfficeScene extends Phaser.Scene {
     this.physics.add.collider(this.selfSprite, groundLayer)
     if (vmGroup) this.physics.add.collider(this.selfSprite, vmGroup)
 
-    // Camera
-    this.cameras.main.zoom = this.targetZoom
-    this.cameras.main.startFollow(this.selfSprite, true, 0.1, 0.1)
-    this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels)
-    this.physics.world.setBounds(0, 0, map.widthInPixels, map.heightInPixels)
+    // Store map size for centering logic
+    this.mapW = map.widthInPixels
+    this.mapH = map.heightInPixels
+
+    // Physics bounds (keeps player inside map)
+    this.physics.world.setBounds(0, 0, this.mapW, this.mapH)
+
+    // Camera — NO setBounds so we can freely center the map
+    // Fit the ENTIRE map inside the viewport (both axes), with 4% padding
+    this.zoomFit    = this.calcZoomFit()
+    this.targetZoom = this.zoomFit
+
+    this.cameras.main.setZoom(this.zoomFit)
+    this.cameras.main.centerOn(this.mapW / 2, this.mapH / 2)
+    this.isFollowing = false
+
+    // Recalculate on resize
+    this.scale.on('resize', () => {
+      this.zoomFit = this.calcZoomFit()
+      if (!this.isFollowing) this.targetZoom = this.zoomFit
+    })
 
     // Input
     this.cursors = this.input.keyboard!.createCursorKeys()
@@ -177,21 +204,21 @@ export class OfficeScene extends Phaser.Scene {
 
     // Zoom events
     this.input.on('wheel', (_p:unknown,_o:unknown,_dx:number,dy:number) => {
-      this.targetZoom = Phaser.Math.Clamp(this.targetZoom * (dy > 0 ? 0.9 : 1.1), ZOOM_MIN, ZOOM_MAX)
+      this.targetZoom = Phaser.Math.Clamp(this.targetZoom * (dy > 0 ? 0.9 : 1.1), this.zoomFit, ZOOM_MAX)
     })
     this.input.on('pointermove', (ptr: Phaser.Input.Pointer) => {
       const p1 = this.input.pointer1, p2 = this.input.pointer2
       if (p1.isDown && p2.isDown) {
         const d = Math.hypot(p1.x-p2.x, p1.y-p2.y)
         if (this.pinchDist != null)
-          this.targetZoom = Phaser.Math.Clamp(this.targetZoom * (d/this.pinchDist), ZOOM_MIN, ZOOM_MAX)
+          this.targetZoom = Phaser.Math.Clamp(this.targetZoom * (d/this.pinchDist), this.zoomFit, ZOOM_MAX)
         this.pinchDist = d; void ptr
       } else { this.pinchDist = null }
     })
     this.input.keyboard!.on('keydown-PLUS',  () => this.zoomBy(1.15))
     this.input.keyboard!.on('keydown-MINUS', () => this.zoomBy(0.87))
     this.input.keyboard!.on('keydown-EQUAL', () => this.zoomBy(1.15))
-    this.input.keyboard!.on('keydown-ZERO',  () => { this.targetZoom = ZOOM_DEFAULT })
+    this.input.keyboard!.on('keydown-ZERO',  () => { this.targetZoom = this.zoomFit })
 
     void vendGroup
   }
@@ -221,9 +248,9 @@ export class OfficeScene extends Phaser.Scene {
   }
 
   // ── Public zoom API ──────────────────────────────────────────────────────
-  zoomBy(f: number) { this.targetZoom = Phaser.Math.Clamp(this.targetZoom * f, ZOOM_MIN, ZOOM_MAX) }
-  zoomTo(v: number) { this.targetZoom = Phaser.Math.Clamp(v, ZOOM_MIN, ZOOM_MAX) }
-  zoomToFit()       { this.targetZoom = ZOOM_MIN }
+  zoomBy(f: number) { this.targetZoom = Phaser.Math.Clamp(this.targetZoom * f, this.zoomFit, ZOOM_MAX) }
+  zoomTo(v: number) { this.targetZoom = Phaser.Math.Clamp(v, this.zoomFit, ZOOM_MAX) }
+  zoomToFit()       { this.targetZoom = this.zoomFit }
   getZoom()         { return this.cameras.main.zoom }
 
   // ── Other player API ──────────────────────────────────────────────────────
@@ -309,10 +336,36 @@ export class OfficeScene extends Phaser.Scene {
   update() {
     if (!this.selfSprite || !this.cursors) return
 
-    // Smooth zoom
-    const cz = this.cameras.main.zoom
-    if (Math.abs(cz - this.targetZoom) > 0.001)
-      this.cameras.main.setZoom(cz + (this.targetZoom - cz) * ZOOM_LERP)
+    // Smooth zoom lerp
+    const cam = this.cameras.main
+    const cz = cam.zoom
+    const newZoom = Math.abs(cz - this.targetZoom) > 0.0005
+      ? cz + (this.targetZoom - cz) * ZOOM_LERP
+      : this.targetZoom
+    cam.setZoom(newZoom)
+
+    // Determine if we are in "overview" mode (zoom at or near zoomFit)
+    const atFit = this.targetZoom <= this.zoomFit + 0.05
+
+    if (atFit) {
+      // Stop following player — center the camera on the map midpoint
+      if (this.isFollowing) {
+        cam.stopFollow()
+        this.isFollowing = false
+      }
+      // Center on map (no bounds, so scrollX/Y can go anywhere)
+      const cx = this.mapW / 2 - cam.width  / (2 * newZoom)
+      const cy = this.mapH / 2 - cam.height / (2 * newZoom)
+      cam.scrollX += (cx - cam.scrollX) * 0.1
+      cam.scrollY += (cy - cam.scrollY) * 0.1
+    } else {
+      // Resume following the player when zoomed in
+      if (!this.isFollowing) {
+        cam.startFollow(this.selfSprite, true, 0.1, 0.1)
+        cam.setBounds(0, 0, this.mapW, this.mapH)
+        this.isFollowing = true
+      }
+    }
 
     // Velocity
     let vx = 0, vy = 0
