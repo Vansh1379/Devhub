@@ -188,12 +188,12 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent className="space-y-4">
             {loadingOrgs ? (
-            <p className="text-sm text-gray-400">Loading…</p>
-          ) : organizations.length === 0 ? (
-            <p className="text-sm text-gray-400">
-              You’re not in any organization yet.
-            </p>
-          ) : (
+              <p className="text-sm text-gray-400">Loading…</p>
+            ) : organizations.length === 0 ? (
+              <p className="text-sm text-gray-400">
+                You’re not in any organization yet.
+              </p>
+            ) : (
               <ul className="space-y-2">
                 {organizations.map((org) => (
                   <li key={org.id}>

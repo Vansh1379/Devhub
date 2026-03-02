@@ -75,7 +75,7 @@ export default function Office() {
     const game = new Phaser.Game({
       type: Phaser.AUTO,
       parent: containerRef.current,
-      backgroundColor: "#93cbee",
+      transparent: true,
       scene: officeScene,
       pixelArt: true,
       antialias: false,
