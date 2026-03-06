@@ -12,6 +12,7 @@ export type CharacterName = (typeof CHARACTERS)[number]
 const SPEED      = 200
 const ZOOM_MAX   = 2.5
 const ZOOM_LERP  = 0.1
+const MAP_W      = 1280   // pixel width of the Tiled map
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 export interface OtherPlayer {
@@ -69,6 +70,17 @@ export function registerAnims(anims: Phaser.Animations.AnimationManager) {
   }
 }
 
+// ─── Teleport zone ────────────────────────────────────────────────────────────
+interface TeleportZone {
+  // trigger rect: player x/y inside this triggers a warp
+  triggerX: number; triggerY: number; triggerW: number; triggerH: number
+  // destination: where to place the player after warping
+  destX: number; destY: number
+  // return trigger (inside room → back to map)
+  returnX: number; returnY: number; returnW: number; returnH: number
+  returnDestX: number; returnDestY: number
+}
+
 // ─── Scene ───────────────────────────────────────────────────────────────────
 export class OfficeScene extends Phaser.Scene {
   // self
@@ -93,12 +105,12 @@ export class OfficeScene extends Phaser.Scene {
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys
   private wasd!: { W: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key }
 
-  // zoom — starts at zoom-to-fit, updated in create()
+  // zoom
   private targetZoom = 1
-  private zoomFit    = 1   // zoom that makes the full map fill the screen width
+  private zoomFit    = 1
   private pinchDist: number | null = null
 
-  // map dimensions (set in create)
+  // map dimensions
   private mapW = 1280
   private mapH = 960
   private isFollowing = true
@@ -107,6 +119,10 @@ export class OfficeScene extends Phaser.Scene {
   private roomManager!: RoomManager
   private roomIdCounter = 0
   private groundLayer!: Phaser.Tilemaps.TilemapLayer
+
+  // teleport zones for dynamic rooms
+  private teleportZones: TeleportZone[] = []
+  private teleportCooldown = false
 
   // callbacks
   onMove?: MoveCallback
@@ -142,11 +158,10 @@ export class OfficeScene extends Phaser.Scene {
       this.load.spritesheet(char, `/assets/character/${char}.png`, { frameWidth:32, frameHeight:48 })
   }
 
-  // Zoom that makes the full map fit entirely inside the viewport (both axes)
   private calcZoomFit(): number {
     const zx = this.scale.width  / this.mapW
     const zy = this.scale.height / this.mapH
-    return Math.min(zx, zy) * 0.96 // 4% padding so edges don't clip
+    return Math.min(zx, zy) * 0.96
   }
 
   // ── Create ───────────────────────────────────────────────────────────────
@@ -160,21 +175,21 @@ export class OfficeScene extends Phaser.Scene {
     const groundLayer = this.groundLayer
 
     // Static object layers
-    const vendGroup = this.buildObjectLayer(map, 'Wall',                 'tiles_wall','FloorAndGround',false)
-    this.buildObjectLayer(map, 'Objects',            'office',    'Modern_Office_Black_Shadow', false)
-    this.buildObjectLayer(map, 'ObjectsOnCollide',   'office',    'Modern_Office_Black_Shadow', true)
-    this.buildObjectLayer(map, 'GenericObjects',     'generic',   'Generic',  false)
+    const vendGroup = this.buildObjectLayer(map, 'Wall',                  'tiles_wall','FloorAndGround',false)
+    this.buildObjectLayer(map, 'Objects',             'office',    'Modern_Office_Black_Shadow', false)
+    this.buildObjectLayer(map, 'ObjectsOnCollide',    'office',    'Modern_Office_Black_Shadow', true)
+    this.buildObjectLayer(map, 'GenericObjects',      'generic',   'Generic',  false)
     this.buildObjectLayer(map, 'GenericObjectsOnCollide','generic','Generic', true)
-    this.buildObjectLayer(map, 'Basement',           'basement',  'Basement', true)
-    this.buildObjectLayer(map, 'Chair',              'chairs',    'chair',    false)
-    this.buildObjectLayer(map, 'Computer',           'computers', 'computer', false)
-    this.buildObjectLayer(map, 'Whiteboard',         'whiteboards','whiteboard',false)
+    this.buildObjectLayer(map, 'Basement',            'basement',  'Basement', true)
+    this.buildObjectLayer(map, 'Chair',               'chairs',    'chair',    false)
+    this.buildObjectLayer(map, 'Computer',            'computers', 'computer', false)
+    this.buildObjectLayer(map, 'Whiteboard',          'whiteboards','whiteboard',false)
     const vmGroup = this.buildObjectLayer(map, 'VendingMachine','vendingmachines','vendingmachine', true)
 
     // Self sprite
     this.selfSprite = this.physics.add.sprite(705, 500, this.selfChar)
     this.selfSprite.setDepth(this.selfSprite.y)
-    this.selfSprite.setCollideWorldBounds(true)
+    this.selfSprite.setCollideWorldBounds(false)
     const body = this.selfSprite.body as Phaser.Physics.Arcade.Body
     body.setSize(this.selfSprite.width * 0.5, this.selfSprite.height * 0.2)
     body.setOffset(this.selfSprite.width * 0.25, this.selfSprite.height * 0.8)
@@ -192,22 +207,19 @@ export class OfficeScene extends Phaser.Scene {
     this.mapW = map.widthInPixels
     this.mapH = map.heightInPixels
 
-    // Dynamic room manager (renders custom rooms below the Tiled map)
+    // Dynamic room manager
     this.roomManager = new RoomManager(this)
 
-    // Physics world starts at map size, expands as rooms are added
+    // Physics world — generous bounds
     this.physics.world.setBounds(0, 0, this.mapW, this.mapH)
 
-    // Camera — NO setBounds so we can freely center the map
-    // Fit the ENTIRE map inside the viewport (both axes), with 4% padding
+    // Camera
     this.zoomFit    = this.calcZoomFit()
     this.targetZoom = this.zoomFit
-
     this.cameras.main.setZoom(this.zoomFit)
     this.cameras.main.centerOn(this.mapW / 2, this.mapH / 2)
     this.isFollowing = false
 
-    // Recalculate on resize
     this.scale.on('resize', () => {
       this.zoomFit = this.calcZoomFit()
       if (!this.isFollowing) this.targetZoom = this.zoomFit
@@ -262,43 +274,45 @@ export class OfficeScene extends Phaser.Scene {
     return group
   }
 
-  // ── Public zoom API ──────────────────────────────────────────────────────
-  // ── Dynamic Room API (called from React) ──────────────────────────────────
+  // ── Dynamic Room API ──────────────────────────────────────────────────────
   addRoom(type: RoomType, name: string): RoomInstance {
     const id   = `dyn_${++this.roomIdCounter}`
     const room = this.roomManager.addRoom(id, name, type)
     const cor  = room.corridor
 
-    // ── Punch a walkable corridor through the Tiled right-wall collision ──
-    // 1. Remove collision tiles in the ground layer at the corridor passage
-    if (this.groundLayer) {
-      const tileSize = 32
-      const startTileX = Math.floor(cor.x / tileSize)
-      const endTileX   = Math.floor((cor.x + cor.w) / tileSize)
-      const startTileY = Math.floor(cor.y / tileSize)
-      const endTileY   = Math.ceil((cor.y + cor.h) / tileSize)
-      for (let tx = startTileX; tx <= endTileX; tx++) {
-        for (let ty = startTileY; ty < endTileY; ty++) {
-          const tile = this.groundLayer.getTileAt(tx, ty)
-          if (tile) tile.setCollision(false, false, false, false)
-        }
-      }
-    }
-
-    // 2. Add a static transparent zone in the room's walkable area so the
-    //    player's collideWorldBounds doesn't trap them at MAP_W boundary
-    this.physics.world.setBounds(0, 0, 99999, 99999)  // temporarily unlimited
-    this.selfSprite?.setCollideWorldBounds(false)      // disable world bounds clamp
-
-    // Expand physics + camera world
-    const bounds = this.roomManager.getWorldBounds()
-    this.physics.world.setBounds(0, 0, bounds.w + 512, bounds.h + 512)
+    // Expand physics world to include the new room
+    this.physics.world.setBounds(0, 0, room.px + room.pw + 512, this.mapH + room.py + room.ph + 512)
 
     // Update map size so zoom-to-fit recalculates correctly
+    const bounds = this.roomManager.getWorldBounds()
     this.mapW = bounds.w
     this.mapH = Math.max(this.mapH, bounds.h)
     this.zoomFit    = this.calcZoomFit()
     this.targetZoom = this.zoomFit
+
+    // ── Register teleport zone instead of fighting tile collisions ────────
+    // Trigger: player walks right into the corridor at map edge (x near MAP_W)
+    // They get teleported to inside the room.
+    const roomInteriorX = room.px + 64   // well inside room, past left wall
+    const corridorMidY  = cor.y + cor.h / 2
+
+    const zone: TeleportZone = {
+      // entry trigger: a 20px wide strip just before MAP_W right edge
+      triggerX: MAP_W - 20,
+      triggerY: cor.y - 4,
+      triggerW: 40,
+      triggerH: cor.h + 8,
+      destX: roomInteriorX,
+      destY: corridorMidY,
+      // return trigger: left edge of room interior
+      returnX: room.px + 30,
+      returnY: cor.y - 4,
+      returnW: 40,
+      returnH: cor.h + 8,
+      returnDestX: MAP_W - 80,
+      returnDestY: corridorMidY,
+    }
+    this.teleportZones.push(zone)
 
     this.onRoomsChanged?.(this.roomManager.getRooms())
     return room
@@ -366,7 +380,6 @@ export class OfficeScene extends Phaser.Scene {
 
   // ── Internals ─────────────────────────────────────────────────────────────
   private spawnOther(p: OtherPlayer) {
-    // Cycle through non-adam characters for visual variety
     const chars: CharacterName[] = ['ash', 'lucy', 'nancy']
     const char = chars[this.otherSprites.size % chars.length]
     const sprite = this.physics.add.sprite(p.x, p.z, char)
@@ -388,13 +401,47 @@ export class OfficeScene extends Phaser.Scene {
     direction: string
   ) {
     if (!direction) return
-    // direction may be a full anim key like 'adam_run_right', or just 'down'
     let key: string
     if (direction.includes('_run_') || direction.includes('_idle_'))
-      key = direction.replace(/^[a-z]+_/, `${e.char}_`) // swap character prefix
+      key = direction.replace(/^[a-z]+_/, `${e.char}_`)
     else
       key = `${e.char}_idle_${direction}`
     if (e.sprite.anims.currentAnim?.key !== key) e.sprite.play(key, true)
+  }
+
+  // ── Teleport check ────────────────────────────────────────────────────────
+  private checkTeleports() {
+    if (!this.selfSprite || this.teleportCooldown || this.teleportZones.length === 0) return
+    const px = this.selfSprite.x
+    const py = this.selfSprite.y
+
+    for (const z of this.teleportZones) {
+      // Entry: map → room
+      if (
+        px >= z.triggerX && px <= z.triggerX + z.triggerW &&
+        py >= z.triggerY && py <= z.triggerY + z.triggerH
+      ) {
+        this.selfSprite.setPosition(z.destX, z.destY)
+        this.selfSprite.setVelocity(0, 0)
+        this.startTeleportCooldown()
+        return
+      }
+      // Return: room → map
+      if (
+        px >= z.returnX && px <= z.returnX + z.returnW &&
+        py >= z.returnY && py <= z.returnY + z.returnH
+      ) {
+        this.selfSprite.setPosition(z.returnDestX, z.returnDestY)
+        this.selfSprite.setVelocity(0, 0)
+        this.startTeleportCooldown()
+        return
+      }
+    }
+  }
+
+  private startTeleportCooldown() {
+    this.teleportCooldown = true
+    this.time.delayedCall(400, () => { this.teleportCooldown = false })
   }
 
   // ── Game loop ─────────────────────────────────────────────────────────────
@@ -409,22 +456,18 @@ export class OfficeScene extends Phaser.Scene {
       : this.targetZoom
     cam.setZoom(newZoom)
 
-    // Determine if we are in "overview" mode (zoom at or near zoomFit)
     const atFit = this.targetZoom <= this.zoomFit + 0.05
 
     if (atFit) {
-      // Stop following player — center the camera on the map midpoint
       if (this.isFollowing) {
         cam.stopFollow()
         this.isFollowing = false
       }
-      // Center on map (no bounds, so scrollX/Y can go anywhere)
       const cx = this.mapW / 2 - cam.width  / (2 * newZoom)
       const cy = this.mapH / 2 - cam.height / (2 * newZoom)
       cam.scrollX += (cx - cam.scrollX) * 0.1
       cam.scrollY += (cy - cam.scrollY) * 0.1
     } else {
-      // Resume following the player when zoomed in
       if (!this.isFollowing) {
         cam.startFollow(this.selfSprite, true, 0.1, 0.1)
         cam.setBounds(0, 0, this.mapW, this.mapH)
@@ -459,11 +502,11 @@ export class OfficeScene extends Phaser.Scene {
     // Name tag
     this.selfNameText.setPosition(this.selfSprite.x, this.selfSprite.y - this.selfSprite.height * 0.5 - 2)
 
-    // Emit move to React / socket
+    // Emit move
     if (vx !== 0 || vy !== 0)
       this.onMove?.(this.selfSprite.x, this.selfSprite.y, newAnim)
 
-    // Meeting zone: check static Tiled zones first, then dynamic rooms
+    // Meeting zone
     const staticZone = getZoneAt(this.selfSprite.x, this.selfSprite.y)
     const dynRoom    = this.roomManager?.getRoomAt(this.selfSprite.x, this.selfSprite.y)
     const dynZone    = dynRoom && ROOM_CONFIGS[dynRoom.type].isMeetingZone
@@ -475,6 +518,9 @@ export class OfficeScene extends Phaser.Scene {
       this.lastZoneId = zoneId
       this.onZoneChange?.(zone ?? null)
     }
+
+    // Teleport into/out of dynamic rooms
+    this.checkTeleports()
 
     // Interpolate other players
     this.otherSprites.forEach((e) => {

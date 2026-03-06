@@ -50,12 +50,12 @@ export function AddRoomModal({ onAdd, onClose }: Props) {
         </div>
 
         <div className="p-6 flex flex-col gap-5">
-          {/* Room type grid */}
+          {/* Room type list */}
           <div>
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 block">
               Room Type
             </label>
-            <div className="grid grid-cols-5 gap-2">
+            <div className="space-y-2">
               {ROOM_ORDER.map((type) => {
                 const c = ROOM_CONFIGS[type];
                 const isSelected = selectedType === type;
@@ -64,39 +64,35 @@ export function AddRoomModal({ onAdd, onClose }: Props) {
                     key={type}
                     type="button"
                     onClick={() => setSelectedType(type)}
-                    className={`
-                      flex flex-col items-center gap-1.5 rounded-xl border p-3 text-center transition-all
-                      ${isSelected
-                        ? "border-primary bg-primary/10 shadow-sm ring-1 ring-primary/40"
-                        : "border-border bg-muted/30 hover:bg-muted/60 hover:border-muted-foreground/40"
-                      }
-                    `}
+                    className={
+                      "flex w-full items-center justify-between rounded-lg border px-4 py-3 text-left transition " +
+                      (isSelected
+                        ? "border-white/30 bg-white/10"
+                        : "border-white/10 bg-white/5 hover:bg-white/10")
+                    }
                   >
-                    <span className="text-2xl">{c.emoji}</span>
-                    <span className="text-[10px] font-medium leading-tight text-foreground">
-                      {c.label}
-                    </span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">{c.emoji}</span>
+                      <div>
+                        <p className="text-sm font-medium text-foreground">{c.label}</p>
+                        <p className="text-xs text-muted-foreground">{c.description}</p>
+                      </div>
+                    </div>
+                    {c.isMeetingZone && (
+                      <span className="rounded-full border border-blue-400/40 bg-blue-400/20 px-2 py-0.5 text-[10px] font-medium text-blue-200">
+                        Video call
+                      </span>
+                    )}
                   </button>
                 );
               })}
             </div>
           </div>
 
-          {/* Selected type description */}
-          <div
-            className="rounded-lg px-4 py-3 text-sm border"
-            style={{
-              backgroundColor: `${intToHex(ROOM_CONFIGS[selectedType].color)}22`,
-              borderColor: `${intToHex(ROOM_CONFIGS[selectedType].accentColor)}55`,
-            }}
-          >
+          {/* Selected type summary */}
+          <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm">
             <span className="font-medium">{cfg.emoji} {cfg.label}</span>
             <span className="text-muted-foreground"> — {cfg.description}</span>
-            {cfg.isMeetingZone && (
-              <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-blue-500/20 px-2 py-0.5 text-[10px] font-medium text-blue-400 border border-blue-500/30">
-                📹 Video call zone
-              </span>
-            )}
           </div>
 
           {/* Room name */}
@@ -130,9 +126,4 @@ export function AddRoomModal({ onAdd, onClose }: Props) {
       </div>
     </div>
   );
-}
-
-// Helper: convert 0xRRGGBB number to CSS hex string
-function intToHex(n: number): string {
-  return "#" + n.toString(16).padStart(6, "0");
 }
