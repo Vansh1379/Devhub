@@ -29,6 +29,7 @@ export interface OtherPlayer {
 export type MoveCallback         = (worldX: number, worldY: number, anim: string) => void
 export type ZoneCallback         = (zone: { roomId: string } | null) => void
 export type RoomsChangedCallback = (rooms: { id: string; name: string }[]) => void
+export type ChairNearCallback    = (near: boolean) => void
 
 // ─── Meeting zones (pixel-space rectangles on the Tiled map) ─────────────────
 interface MeetingZone { roomId: string; x: number; y: number; w: number; h: number }
@@ -124,10 +125,17 @@ export class OfficeScene extends Phaser.Scene {
   private teleportZones: TeleportZone[] = []
   private teleportCooldown = false
 
+  // chair interaction
+  private chairPositions: Array<{ x: number; y: number; frame: number }> = []
+  private isSitting = false
+  private wasNearChair = false
+  private eKey!: Phaser.Input.Keyboard.Key
+
   // callbacks
   onMove?: MoveCallback
   onZoneChange?: ZoneCallback
   onRoomsChanged?: (rooms: RoomInstance[]) => void
+  onChairNear?: ChairNearCallback
 
   private lastZoneId: string | null = null
 
@@ -174,17 +182,18 @@ export class OfficeScene extends Phaser.Scene {
     this.groundLayer.setCollisionByProperty({ collides: true })
     const groundLayer = this.groundLayer
 
-    // Static object layers
-    const vendGroup = this.buildObjectLayer(map, 'Wall',                  'tiles_wall','FloorAndGround',false)
-    this.buildObjectLayer(map, 'Objects',             'office',    'Modern_Office_Black_Shadow', false)
-    this.buildObjectLayer(map, 'ObjectsOnCollide',    'office',    'Modern_Office_Black_Shadow', true)
-    this.buildObjectLayer(map, 'GenericObjects',      'generic',   'Generic',  false)
-    this.buildObjectLayer(map, 'GenericObjectsOnCollide','generic','Generic', true)
-    this.buildObjectLayer(map, 'Basement',            'basement',  'Basement', true)
-    this.buildObjectLayer(map, 'Chair',               'chairs',    'chair',    false)
-    this.buildObjectLayer(map, 'Computer',            'computers', 'computer', false)
-    this.buildObjectLayer(map, 'Whiteboard',          'whiteboards','whiteboard',false)
-    const vmGroup = this.buildObjectLayer(map, 'VendingMachine','vendingmachines','vendingmachine', true)
+    // Static object layers — all built before selfSprite exists,
+    // so collidable groups are captured and wired up below after selfSprite creation.
+    this.buildObjectLayer(map, 'Wall',                     'tiles_wall',    'FloorAndGround',              false)
+    this.buildObjectLayer(map, 'Objects',                  'office',        'Modern_Office_Black_Shadow',   false)
+    const officeColGroup  = this.buildObjectLayer(map, 'ObjectsOnCollide',         'office',    'Modern_Office_Black_Shadow', false)
+    this.buildObjectLayer(map, 'GenericObjects',           'generic',       'Generic',                     false)
+    const genericColGroup = this.buildObjectLayer(map, 'GenericObjectsOnCollide',  'generic',   'Generic',                   false)
+    const basementGroup   = this.buildObjectLayer(map, 'Basement',                 'basement',  'Basement',                  false)
+    const chairGroup      = this.buildObjectLayer(map, 'Chair',                    'chairs',    'chair',                     false)
+    const computerGroup   = this.buildObjectLayer(map, 'Computer',                 'computers', 'computer',                  false)
+    const whiteboardGroup = this.buildObjectLayer(map, 'Whiteboard',               'whiteboards','whiteboard',               false)
+    const vmGroup         = this.buildObjectLayer(map, 'VendingMachine',           'vendingmachines','vendingmachine',        false)
 
     // Self sprite
     this.selfSprite = this.physics.add.sprite(705, 500, this.selfChar)
@@ -199,9 +208,21 @@ export class OfficeScene extends Phaser.Scene {
       fontSize: '11px', color: '#111111', stroke: '#ffffff', strokeThickness: 3, resolution: 2,
     }).setOrigin(0.5, 1).setDepth(5001)
 
-    // Collisions
+    // Resize item physics bodies to cover the visible object area so the player
+    // cannot walk through seats/desks from any direction.
+    // The body top is placed just below the decorative "back" of each object
+    // so players can walk behind chairs but cannot enter the seat/body area.
+    // Args: group, bodyW, bodyH, offsetX, offsetY (relative to sprite top-left)
+    this.shrinkGroupBodies(chairGroup,      22, 36,  5, 20)   // 32×64: covers seat+legs
+    this.shrinkGroupBodies(computerGroup,   80, 40,  8, 16)   // 96×64: covers monitor body
+    this.shrinkGroupBodies(whiteboardGroup, 52, 48,  6, 12)   // 64×64: covers board face
+    this.shrinkGroupBodies(vmGroup,         38, 56,  5,  8)   // 48×72: covers machine body
+
+    // Collisions — all wired after selfSprite exists
     this.physics.add.collider(this.selfSprite, groundLayer)
-    if (vmGroup) this.physics.add.collider(this.selfSprite, vmGroup)
+    for (const g of [officeColGroup, genericColGroup, basementGroup, chairGroup, computerGroup, whiteboardGroup, vmGroup]) {
+      if (g) this.physics.add.collider(this.selfSprite, g)
+    }
 
     // Store map size for centering logic
     this.mapW = map.widthInPixels
@@ -225,9 +246,28 @@ export class OfficeScene extends Phaser.Scene {
       if (!this.isFollowing) this.targetZoom = this.zoomFit
     })
 
+    // Collect chair positions + frame (encodes facing direction) from Tiled object layer
+    const chairLayer   = map.getObjectLayer('Chair')
+    const chairTileset = map.getTileset('chair')
+    if (chairLayer) {
+      for (const obj of chairLayer.objects) {
+        if (obj.x != null && obj.y != null) {
+          const frame = (obj.gid != null && chairTileset)
+            ? obj.gid - chairTileset.firstgid
+            : 0
+          this.chairPositions.push({
+            x: obj.x + (obj.width  ?? 32) * 0.5,
+            y: obj.y - (obj.height ?? 32) * 0.5,
+            frame,
+          })
+        }
+      }
+    }
+
     // Input
     this.cursors = this.input.keyboard!.createCursorKeys()
-    this.wasd = this.input.keyboard!.addKeys('W,S,A,D') as typeof this.wasd
+    this.wasd    = this.input.keyboard!.addKeys('W,S,A,D') as typeof this.wasd
+    this.eKey    = this.input.keyboard!.addKey('E')
 
     // Zoom events
     this.input.on('wheel', (_p:unknown,_o:unknown,_dx:number,dy:number) => {
@@ -247,7 +287,6 @@ export class OfficeScene extends Phaser.Scene {
     this.input.keyboard!.on('keydown-EQUAL', () => this.zoomBy(1.15))
     this.input.keyboard!.on('keydown-ZERO',  () => { this.targetZoom = this.zoomFit })
 
-    void vendGroup
   }
 
   // ── Object layer builder ─────────────────────────────────────────────────
@@ -274,6 +313,26 @@ export class OfficeScene extends Phaser.Scene {
     return group
   }
 
+  // ── Shrink static group physics bodies to a thin base strip ──────────────
+  // Keeps objects solid at foot-level only so players can walk close without
+  // being blocked from above by the tall sprite bounding box.
+  private shrinkGroupBodies(
+    group: Phaser.Physics.Arcade.StaticGroup | null,
+    bodyW: number,   // desired physics body width
+    bodyH: number,   // desired physics body height (small, foot-level strip)
+    offsetX: number, // x offset from sprite origin to body left edge
+    offsetY: number  // y offset from sprite origin to body top edge
+  ) {
+    if (!group) return
+    group.getChildren().forEach((child) => {
+      const sprite = child as Phaser.Physics.Arcade.Sprite
+      const body   = sprite.body as Phaser.Physics.Arcade.StaticBody
+      body.setSize(bodyW, bodyH)
+      body.setOffset(offsetX, offsetY)
+    })
+    group.refresh()
+  }
+
   // ── Dynamic Room API ──────────────────────────────────────────────────────
   addRoom(type: RoomType, name: string): RoomInstance {
     const id   = `dyn_${++this.roomIdCounter}`
@@ -290,29 +349,59 @@ export class OfficeScene extends Phaser.Scene {
     this.zoomFit    = this.calcZoomFit()
     this.targetZoom = this.zoomFit
 
+    // ── Clear tile collisions in the corridor strip ───────────────────────
+    // The Tiled ground layer marks right-wall tiles as collides=true which
+    // physically blocks the player. Remove collision only in the corridor opening
+    // so the player can walk through into the room.
+    const TILE = 32
+    const tileY1 = Math.floor(cor.y / TILE)
+    const tileY2 = Math.ceil((cor.y + cor.h) / TILE)
+    const tileX1 = Math.floor(cor.x / TILE)
+    const tileX2 = Math.ceil(MAP_W / TILE)
+    for (let tx = tileX1; tx <= tileX2; tx++) {
+      for (let ty = tileY1; ty <= tileY2; ty++) {
+        const tile = this.groundLayer.getTileAt(tx, ty)
+        if (tile) tile.setCollision(false, false, false, false)
+      }
+    }
+
+    // ── Expand camera bounds if already in follow mode ────────────────────
+    if (this.isFollowing) {
+      this.cameras.main.setBounds(0, 0, this.mapW, this.mapH)
+    }
+
     // ── Register teleport zone instead of fighting tile collisions ────────
     // Trigger: player walks right into the corridor at map edge (x near MAP_W)
     // They get teleported to inside the room.
-    const roomInteriorX = room.px + 64   // well inside room, past left wall
+    // NOTE: entry destination must be PAST the return trigger zone to avoid
+    // the player immediately bouncing back out after arrival.
+    const roomInteriorX = room.px + TILE * 5  // 5 tiles into room, well past return trigger
     const corridorMidY  = cor.y + cor.h / 2
 
     const zone: TeleportZone = {
-      // entry trigger: a 20px wide strip just before MAP_W right edge
-      triggerX: MAP_W - 20,
+      // entry trigger: a strip straddling MAP_W (map → room)
+      triggerX: MAP_W - 16,
       triggerY: cor.y - 4,
-      triggerW: 40,
+      triggerW: 32,
       triggerH: cor.h + 8,
       destX: roomInteriorX,
       destY: corridorMidY,
-      // return trigger: left edge of room interior
-      returnX: room.px + 30,
+      // return trigger: first 2 tiles of room interior (left wall opening)
+      // Must NOT overlap with entry destination (room.px + TILE*5)
+      returnX: room.px + TILE,
       returnY: cor.y - 4,
-      returnW: 40,
+      returnW: TILE * 2,
       returnH: cor.h + 8,
       returnDestX: MAP_W - 80,
       returnDestY: corridorMidY,
     }
     this.teleportZones.push(zone)
+
+    // ── Register chairs placed inside this room for the sit system ───────
+    for (const c of this.roomManager.getDynChairPositions()) {
+      if (!this.chairPositions.some(p => p.x === c.x && p.y === c.y))
+        this.chairPositions.push(c)
+    }
 
     this.onRoomsChanged?.(this.roomManager.getRooms())
     return room
@@ -409,6 +498,38 @@ export class OfficeScene extends Phaser.Scene {
     if (e.sprite.anims.currentAnim?.key !== key) e.sprite.play(key, true)
   }
 
+  // ── Chair frame → sit direction ───────────────────────────────────────────
+  // chair.png layout (32×64 per frame): 0=down, 1=up, 2=left, 3=right
+  private chairDir(frame: number): 'down' | 'up' | 'left' | 'right' {
+    if (frame === 1) return 'up'
+    if (frame === 2) return 'left'
+    if (frame === 3) return 'right'
+    return 'down'
+  }
+
+  // ── Sit / stand ───────────────────────────────────────────────────────────
+  private sitDown(chair: { x: number; y: number; frame: number }) {
+    this.isSitting = true
+    const dir = this.chairDir(chair.frame)
+
+    // Snap player onto the chair seat
+    this.selfSprite.setPosition(chair.x, chair.y)
+    this.selfSprite.setVelocity(0, 0)
+
+    this.selfSprite.play(`${this.selfChar}_sit_${dir}`, true)
+    // Keep lastAnim pointed at the chair direction so standUp resumes correctly
+    this.lastAnim = `${this.selfChar}_idle_${dir}`
+  }
+
+  private standUp() {
+    this.isSitting = false
+    // lastAnim was set to the chair direction in sitDown — resume idle that way
+    const idleAnim = this.lastAnim.replace('_run_', '_idle_')
+    this.selfSprite.play(idleAnim, true)
+    this.lastAnim = idleAnim
+    this.onChairNear?.(this.wasNearChair)
+  }
+
   // ── Teleport check ────────────────────────────────────────────────────────
   private checkTeleports() {
     if (!this.selfSprite || this.teleportCooldown || this.teleportZones.length === 0) return
@@ -441,6 +562,11 @@ export class OfficeScene extends Phaser.Scene {
 
   private startTeleportCooldown() {
     this.teleportCooldown = true
+    // If zoomed out (fit mode), zoom in so the camera enters follow mode and
+    // tracks the player into/out of the room.
+    if (!this.isFollowing) {
+      this.targetZoom = Phaser.Math.Clamp(this.zoomFit * 2, this.zoomFit, ZOOM_MAX)
+    }
     this.time.delayedCall(400, () => { this.teleportCooldown = false })
   }
 
@@ -475,29 +601,62 @@ export class OfficeScene extends Phaser.Scene {
       }
     }
 
-    // Velocity
+    // ── Chair proximity — find nearest chair within radius ───────────────
+    const px = this.selfSprite.x, py = this.selfSprite.y
+    const CHAIR_RADIUS = 40
+    const nearby = this.chairPositions.filter(
+      c => Math.abs(c.x - px) < CHAIR_RADIUS && Math.abs(c.y - py) < CHAIR_RADIUS
+    )
+    const nearestChair = nearby.sort(
+      (a, b) => Math.hypot(a.x - px, a.y - py) - Math.hypot(b.x - px, b.y - py)
+    )[0] ?? null
+    const nearChair = nearestChair !== null
+    if (nearChair !== this.wasNearChair) {
+      this.wasNearChair = nearChair
+      if (!nearChair && this.isSitting) this.standUp()
+      this.onChairNear?.(nearChair)
+    }
+
+    // ── E key: sit / stand (only when not in a meeting zone) ─────────────
+    if (Phaser.Input.Keyboard.JustDown(this.eKey) && this.lastZoneId === null) {
+      if (this.isSitting) {
+        this.standUp()
+      } else if (nearestChair) {
+        this.sitDown(nearestChair)
+      }
+    }
+
+    // ── Velocity (blocked while sitting) ─────────────────────────────────
     let vx = 0, vy = 0
-    if (this.cursors.left.isDown  || this.wasd.A.isDown) vx -= SPEED
-    if (this.cursors.right.isDown || this.wasd.D.isDown) vx += SPEED
-    if (this.cursors.up.isDown    || this.wasd.W.isDown) vy -= SPEED
-    if (this.cursors.down.isDown  || this.wasd.S.isDown) vy += SPEED
+    if (!this.isSitting) {
+      if (this.cursors.left.isDown  || this.wasd.A.isDown) vx -= SPEED
+      if (this.cursors.right.isDown || this.wasd.D.isDown) vx += SPEED
+      if (this.cursors.up.isDown    || this.wasd.W.isDown) vy -= SPEED
+      if (this.cursors.down.isDown  || this.wasd.S.isDown) vy += SPEED
+    }
+
+    // Any movement key while sitting → stand up
+    if (this.isSitting && (vx !== 0 || vy !== 0)) this.standUp()
 
     this.selfSprite.setVelocity(vx, vy)
     if (vx !== 0 || vy !== 0)
       (this.selfSprite.body as Phaser.Physics.Arcade.Body).velocity.setLength(SPEED)
     this.selfSprite.setDepth(this.selfSprite.y)
 
-    // Animation
+    // ── Animation ─────────────────────────────────────────────────────────
     let newAnim: string
-    if      (vx > 0) newAnim = `${this.selfChar}_run_right`
-    else if (vx < 0) newAnim = `${this.selfChar}_run_left`
-    else if (vy < 0) newAnim = `${this.selfChar}_run_up`
-    else if (vy > 0) newAnim = `${this.selfChar}_run_down`
-    else             newAnim = this.lastAnim.replace('_run_', '_idle_')
+    if (this.isSitting) {
+      // Keep sitting anim — sitDown() already set it, don't override
+      newAnim = this.selfSprite.anims.currentAnim?.key ?? `${this.selfChar}_sit_down`
+    } else if (vx > 0) newAnim = `${this.selfChar}_run_right`
+    else if (vx < 0)   newAnim = `${this.selfChar}_run_left`
+    else if (vy < 0)   newAnim = `${this.selfChar}_run_up`
+    else if (vy > 0)   newAnim = `${this.selfChar}_run_down`
+    else               newAnim = this.lastAnim.replace('_run_', '_idle_')
 
-    if (newAnim !== this.selfSprite.anims.currentAnim?.key)
+    if (!this.isSitting && newAnim !== this.selfSprite.anims.currentAnim?.key)
       this.selfSprite.play(newAnim, true)
-    this.lastAnim = newAnim
+    if (!this.isSitting) this.lastAnim = newAnim
 
     // Name tag
     this.selfNameText.setPosition(this.selfSprite.x, this.selfSprite.y - this.selfSprite.height * 0.5 - 2)

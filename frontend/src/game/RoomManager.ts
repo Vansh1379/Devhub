@@ -82,6 +82,9 @@ export class RoomManager {
   private gfx: Phaser.GameObjects.Graphics
   private rooms: RoomInstance[] = []
   private labels = new Map<string, { badge: Phaser.GameObjects.Text; sub: Phaser.GameObjects.Text }>()
+  private spriteObjects: Phaser.GameObjects.Image[] = []
+  // Chairs placed inside dynamic rooms — exposed for the sit system
+  private dynChairs: Array<{ x: number; y: number; frame: number }> = []
 
   // Placement cursor: rooms stack downward on the RIGHT side of the map
   // Each room's left wall is flush with the right edge of the main map,
@@ -90,7 +93,7 @@ export class RoomManager {
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene
-    this.gfx = scene.add.graphics().setDepth(10)
+    this.gfx = scene.add.graphics().setDepth(50)
   }
 
   // ── Public: add a room ────────────────────────────────────────────────────
@@ -159,6 +162,11 @@ export class RoomManager {
     return null
   }
 
+  // Returns all chair positions in dynamic rooms (for the sit system)
+  getDynChairPositions(): Array<{ x: number; y: number; frame: number }> {
+    return [...this.dynChairs]
+  }
+
   renameRoom(id: string, newName: string) {
     const r = this.rooms.find(r => r.id === id)
     if (!r) return
@@ -168,49 +176,44 @@ export class RoomManager {
   }
 
   // ── Draw corridor floor + walls ────────────────────────────────────────────
-  // The corridor is drawn from INSIDE the Tiled map outward to the room wall.
-  // This visually covers any wall tiles at the map right edge.
-  // The scene will also create a physics sensor over this area to allow walking through.
   private drawCorridor(corridor: CorridorBounds, corridorY: number) {
-    const g    = this.gfx
-    const cX   = corridor.x
-    const cY   = corridorY
-    const cW   = corridor.w
+    const g  = this.gfx
+    const cX = corridor.x
+    const cY = corridorY
+    const cW = corridor.w
     const WALL_LIGHT = 0xfafafa
     const WALL_TOP   = 0x8fa8b8
 
-    // ── Floor strip (covers the Tiled right-wall visually) ──
-    g.fillStyle(0xd4cfc9, 1)
+    // ── Floor (slightly warm tone so it reads as a passage) ──
+    g.fillStyle(0xdedad3, 1)
     g.fillRect(cX, cY, cW, CORRIDOR_W)
 
-    // ── Tile grid on floor ──
-    g.lineStyle(1, 0x000000, 0.06)
+    // Tile grid on floor
+    g.lineStyle(1, 0x000000, 0.07)
     for (let x = cX; x < cX + cW; x += T) {
       g.strokeRect(x, cY,     T, T)
       g.strokeRect(x, cY + T, T, T)
     }
 
-    // ── Top wall of corridor (above the opening) ──
+    // ── Top wall of corridor ──
     for (let x = cX; x < cX + cW; x += T) {
       g.fillStyle(WALL_LIGHT, 1); g.fillRect(x, cY - T, T, T)
       g.fillStyle(WALL_TOP,   1); g.fillRect(x, cY - T, T, 7)
-      g.fillStyle(0x6b8299,   1); g.fillRect(x, cY - 4,  T, 4)   // shadow drop
+      g.fillStyle(0x6b8299,   1); g.fillRect(x, cY - 4,  T, 4)
     }
 
-    // ── Bottom wall of corridor (below the opening) ──
+    // ── Bottom wall of corridor ──
     for (let x = cX; x < cX + cW; x += T) {
       g.fillStyle(WALL_LIGHT, 1); g.fillRect(x, cY + CORRIDOR_W, T, T)
       g.fillStyle(WALL_TOP,   1); g.fillRect(x, cY + CORRIDOR_W, T, 7)
     }
 
-    // ── Door frame at the map edge (visual indicator) ──
-    const doorX = MAP_W - T
-    g.fillStyle(0xa07830, 1)
-    g.fillRect(doorX, cY - T,          T, 6)  // top lintel
-    g.fillRect(doorX, cY + CORRIDOR_W, T, 6)  // bottom sill
-    // Gold knob
-    g.fillStyle(0xffd700, 1)
-    g.fillCircle(doorX + 6, cY + CORRIDOR_W / 2, 3)
+    // ── Directional arrows on corridor floor (visible from map side) ──
+    g.fillStyle(0xa07830, 0.7)
+    const arrowX   = MAP_W - T - 4
+    const arrowMidY = cY + CORRIDOR_W / 2
+    g.fillTriangle(arrowX + 10, arrowMidY, arrowX,     arrowMidY - 6, arrowX,     arrowMidY + 6)
+    g.fillTriangle(arrowX + 18, arrowMidY, arrowX + 8, arrowMidY - 6, arrowX + 8, arrowMidY + 6)
   }
 
   // ── Draw room ──────────────────────────────────────────────────────────────
@@ -220,12 +223,17 @@ export class RoomManager {
     const { px, py, pw, ph } = room
     const W = T
 
-    // ── Floor ──
-    g.fillStyle(cfg.color, 1)
-    g.fillRect(px + W, py + W, pw - W * 2, ph - W * 2)
+    // ── Floor (checkerboard tile pattern) ──
+    for (let x = px + W; x < px + pw - W; x += T) {
+      for (let y = py + W; y < py + ph - W; y += T) {
+        const even = ((x / T) + (y / T)) % 2 === 0
+        g.fillStyle(even ? cfg.color : Phaser.Display.Color.ValueToColor(cfg.color).darken(8).color, 1)
+        g.fillRect(x, y, T, T)
+      }
+    }
 
-    // Floor tile grid
-    g.lineStyle(1, 0x000000, 0.06)
+    // Subtle grout lines
+    g.lineStyle(1, 0x000000, 0.10)
     for (let x = px + W; x < px + pw - W; x += T)
       for (let y = py + W; y < py + ph - W; y += T)
         g.strokeRect(x, y, T, T)
@@ -277,6 +285,64 @@ export class RoomManager {
 
     // ── Props ──
     this.drawProps(g, room, cfg)
+
+    // ── Archway at the left-wall opening — drawn LAST so walls don't cover it ──
+    this.drawArch(g, px, corridorY)
+  }
+
+  // ── Archway drawn on top of the left-wall opening ────────────────────────
+  // aX = px (left edge of room = MAP_W), openY = top of the corridor opening
+  private drawArch(g: Phaser.GameObjects.Graphics, aX: number, openY: number) {
+    const openH = CORRIDOR_W  // 64px = 2 tiles
+
+    // ── Thick wooden door posts flanking the opening ──
+    // Left/outer face of each post (dark brown)
+    g.fillStyle(0x3d2b0e, 1)
+    g.fillRect(aX - 6, openY - T,        6, T + openH + T)  // outer-left strip
+    // Post above opening
+    g.fillStyle(0x5c3d14, 1)
+    g.fillRect(aX,     openY - T * 2,   T, T * 2)           // above opening (2 tiles tall)
+    // Post below opening
+    g.fillRect(aX,     openY + openH,   T, T * 2)           // below opening (2 tiles tall)
+    // Highlight / light face on posts
+    g.fillStyle(0x8b5e1a, 1)
+    g.fillRect(aX + 2, openY - T * 2,  4, T * 2)
+    g.fillRect(aX + 2, openY + openH,  4, T * 2)
+
+    // ── Header beam spanning the full opening width ──
+    g.fillStyle(0x3d2b0e, 1)
+    g.fillRect(aX - 6, openY - T, T + 6, T)                 // dark beam body
+    g.fillStyle(0x7a4e18, 1)
+    g.fillRect(aX - 4, openY - T, T + 4, 5)                 // bright top edge
+    g.fillStyle(0x2a1a08, 1)
+    g.fillRect(aX - 4, openY - 2, T + 4, 2)                 // shadow under beam
+
+    // ── Threshold strip right at the doorway edge (inside room) ──
+    g.fillStyle(0xd4a050, 0.85)
+    g.fillRect(aX + T, openY, 4, openH)                     // golden step strip
+
+    // ── Doorstep corners (small accent blocks) ──
+    g.fillStyle(0x5c3d14, 1)
+    g.fillRect(aX + T, openY,          8, 8)                 // top-right corner
+    g.fillRect(aX + T, openY + openH - 8, 8, 8)             // bottom-right corner
+  }
+
+  // ── Add a generic sprite prop ─────────────────────────────────────────────
+  private addSprite(x: number, y: number, key: string, frame = 0, depth = 15): Phaser.GameObjects.Image {
+    const img = this.scene.add.image(x, y, key, frame).setOrigin(0, 0).setDepth(depth)
+    this.spriteObjects.push(img)
+    return img
+  }
+
+  // ── Add a chair sprite + register its sit position ────────────────────────
+  // x, y = top-left origin of the 32×64 chair sprite
+  // sitFrame: 0=down, 1=up, 2=left, 3=right (matches OfficeScene.chairDir)
+  private addChair(x: number, y: number, depth: number, sitFrame = 0): Phaser.GameObjects.Image {
+    const img = this.scene.add.image(x, y, 'chairs', sitFrame).setOrigin(0, 0).setDepth(depth)
+    this.spriteObjects.push(img)
+    // Sit position = horizontal center, vertical center of chair sprite (32×64)
+    this.dynChairs.push({ x: x + 16, y: y + 32, frame: sitFrame })
+    return img
   }
 
   // ── Props per room type ───────────────────────────────────────────────────
@@ -290,11 +356,14 @@ export class RoomManager {
       case 'computer': {
         const cols = Math.max(1, Math.floor(iW / (W * 3)))
         const rows = Math.max(1, Math.floor(iH / (W * 4)))
-        for (let r = 0; r < rows; r++)
+        for (let r = 0; r < rows; r++) {
           for (let c = 0; c < cols; c++) {
-            const dx = iX + c * W * 3 + 4, dy = iY + r * W * 4 + W
-            this.desk(g, dx, dy); this.chair(g, dx, dy + W)
+            const dx = iX + c * W * 3, dy = iY + r * W * 4 + W
+            this.addSprite(dx, dy - W, 'computers', 0, dy)
+            // frame 0 = sit_down (facing the screen)
+            this.addChair(dx + W, dy + W, dy + W * 2, 0)
           }
+        }
         break
       }
       case 'meeting': {
@@ -302,26 +371,24 @@ export class RoomManager {
         const tw = iW - W * 2, th = iH - W * 3
         g.fillStyle(0xd4a96a, 1); g.fillRect(tx, ty, tw, th)
         g.fillStyle(0xb08040, 1); g.fillRect(tx, ty, tw, 4); g.fillRect(tx, ty + th - 4, tw, 4)
-        // Whiteboard on top wall
         const wX = iX + Math.floor(iW / 2) - W
-        g.fillStyle(0xfafafa, 1); g.fillRect(wX, iY + 2, W * 2, W - 4)
-        g.lineStyle(1, 0xbbbbbb, 1); g.strokeRect(wX, iY + 2, W * 2, W - 4)
-        g.lineStyle(1, 0x4a90d9, 0.9)
-        g.lineBetween(wX + 4, iY + W - 6, wX + 10, iY + 8)
-        g.lineBetween(wX + 10, iY + 8, wX + 20, iY + 13)
-        // Chairs around table
-        for (let c = 0; c < Math.floor(tw / W); c++) {
-          this.chair(g, tx + c * W, ty - W)
-          this.chair(g, tx + c * W, ty + th)
+        this.addSprite(wX, iY - W, 'whiteboards', 0, iY)
+        const chairCount = Math.floor(tw / W)
+        for (let c = 0; c < chairCount; c++) {
+          this.addChair(tx + c * W, ty - W * 2, ty - W,       0)  // top row  → sit_down
+          this.addChair(tx + c * W, ty + th,    ty + th + W,  1)  // bottom row → sit_up
         }
-        this.chair(g, tx - W, ty + Math.floor(th / 2))
-        this.chair(g, tx + tw, ty + Math.floor(th / 2))
+        // Side chairs
+        this.addChair(tx - W, ty + Math.floor(th / 2) - W, ty + W, 3)   // left → sit_right
+        this.addChair(tx + tw, ty + Math.floor(th / 2) - W, ty + W, 2)  // right → sit_left
         break
       }
       case 'boss': {
         const dX = iX + Math.floor(iW / 2 / W) * W - W
-        this.desk(g, dX, iY + W); this.desk(g, dX + W, iY + W)
-        this.chair(g, dX + W / 2, iY + W * 2)
+        g.fillStyle(0xb08040, 1); g.fillRect(dX, iY + W, W * 2, W)
+        g.fillStyle(0xd4a96a, 1); g.fillRect(dX + 2, iY + W + 2, W * 2 - 4, W - 4)
+        // Boss chair behind desk — sits facing down (toward desk)
+        this.addChair(dX + W / 2, iY, iY + W, 0)
         for (let y = iY; y < iY + iH - W; y += W) this.bookshelf(g, iX, y)
         this.plant(g, iX + iW - W, iY); this.plant(g, iX + iW - W, iY + iH - W)
         break
@@ -335,7 +402,8 @@ export class RoomManager {
       }
       case 'phone': {
         const dX = iX + Math.floor(iW / 2) - W / 2
-        this.desk(g, dX, iY + W / 2); this.chair(g, dX, iY + W * 1.5)
+        this.desk(g, dX, iY + W / 2)
+        this.addChair(dX, iY + W * 1.5, iY + W * 2, 0)
         break
       }
     }

@@ -7,7 +7,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DyteCallView } from "@/components/DyteCallView";
-import { OfficeScene, OtherPlayer, RoomInstance } from "@/game/OfficeScene";
+import { OfficeScene, OtherPlayer, RoomInstance, ChairNearCallback } from "@/game/OfficeScene";
 import { RoomType } from "@/game/RoomManager";
 import { GameSkyBackground } from "@/components/GameSkyBackground";
 import { AddRoomModal } from "@/components/AddRoomModal";
@@ -54,6 +54,9 @@ export default function Office() {
   // Room management
   const [addRoomOpen, setAddRoomOpen] = useState(false);
   const [rooms, setRooms] = useState<RoomInstance[]>([]);
+
+  // Chair interaction
+  const [nearChair, setNearChair] = useState(false);
 
   // Meeting / video state
   const [meetingZone, setMeetingZone] = useState<{ roomId: string } | null>(null);
@@ -120,6 +123,10 @@ export default function Office() {
     officeScene.onZoneChange = (zone) => {
       setMeetingZone(zone);
     };
+
+    officeScene.onChairNear = ((near: boolean) => {
+      setNearChair(near);
+    }) as ChairNearCallback;
 
     officeScene.onRoomsChanged = (updatedRooms) => {
       setRooms([...updatedRooms]);
@@ -474,6 +481,12 @@ export default function Office() {
               <span className="font-medium text-blue-300">Blue zones</span> =
               meeting rooms · Walk in &amp; press{" "}
               <span className="font-medium text-blue-300">E</span> to join call
+            </p>
+          )}
+          {nearChair && !inCall && (
+            <p className="mt-1 text-xs text-white/70">
+              Near a chair · Press{" "}
+              <span className="font-medium text-amber-300">E</span> to sit
             </p>
           )}
         </div>
