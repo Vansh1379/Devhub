@@ -12,6 +12,11 @@ import {
 
 const JWT_SECRET = env.jwtSecret;
 
+interface AppSocket extends Socket {
+  userId: string;
+  currentSpaceId?: string;
+}
+
 function dmChannelId(userId1: string, userId2: string): string {
   return [userId1, userId2].sort().join("_");
 }
@@ -36,11 +41,11 @@ export function attachSocket(httpServer: HttpServer): Server {
     pingInterval: 25000,
   });
 
-  io.on("connection", (socket: Socket) => {
-    const handshakeAuth = socket.handshake.auth as { token?: string };
+  io.on("connection", (baseSocket: Socket) => {
+    const handshakeAuth = baseSocket.handshake.auth as { token?: string };
     const token = handshakeAuth?.token;
     if (!token) {
-      socket.disconnect(true);
+      baseSocket.disconnect(true);
       return;
     }
     let userId: string;
@@ -48,10 +53,11 @@ export function attachSocket(httpServer: HttpServer): Server {
       const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
       userId = decoded.userId;
     } catch {
-      socket.disconnect(true);
+      baseSocket.disconnect(true);
       return;
     }
-    (socket as Socket & { userId: string }).userId = userId;
+    const socket = baseSocket as AppSocket;
+    socket.userId = userId;
 
     socket.on("join_space", async (payload: { spaceId: string; displayName?: string; x?: number; y?: number; z?: number; direction?: string; avatar?: unknown }) => {
       const spaceId = payload?.spaceId;
@@ -78,7 +84,7 @@ export function attachSocket(httpServer: HttpServer): Server {
         direction,
         avatar,
       });
-      (socket as Socket & { currentSpaceId?: string }).currentSpaceId = spaceId;
+      socket.currentSpaceId = spaceId;
 
       const spaceUsers = await getSpaceUsers(spaceId);
       const users = spaceUsers.map((u) => ({ userId: u.userId, socketId: u.socketId, displayName: u.displayName, x: u.x, y: u.y, z: u.z, direction: u.direction, avatar: u.avatar }));
@@ -97,13 +103,13 @@ export function attachSocket(httpServer: HttpServer): Server {
     });
 
     socket.on("leave_space", async (payload: { spaceId: string }) => {
-      const spaceId = payload?.spaceId ?? (socket as Socket & { currentSpaceId?: string }).currentSpaceId;
+      const spaceId = payload?.spaceId ?? socket.currentSpaceId;
       if (!spaceId) return;
       const room = `space:${spaceId}`;
       socket.leave(room);
       await removeUserFromSpace(spaceId, socket.id);
-      (socket as Socket & { currentSpaceId?: string }).currentSpaceId = undefined;
-      socket.to(room).emit("user_left", { userId: (socket as Socket & { userId: string }).userId, socketId: socket.id });
+      socket.currentSpaceId = undefined;
+      socket.to(room).emit("user_left", { userId: socket.userId, socketId: socket.id });
     });
 
     socket.on("join_dm", (payload: { otherUserId: string }) => {
@@ -193,7 +199,7 @@ export function attachSocket(httpServer: HttpServer): Server {
       if (!updated) return;
 
       socket.to(`space:${spaceId}`).emit("user_moved", {
-        userId: (socket as Socket & { userId: string }).userId,
+        userId: socket.userId,
         socketId: socket.id,
         x,
         y,
@@ -203,11 +209,11 @@ export function attachSocket(httpServer: HttpServer): Server {
     });
 
     socket.on("disconnect", async () => {
-      const spaceId = (socket as Socket & { currentSpaceId?: string }).currentSpaceId;
+      const spaceId = socket.currentSpaceId;
       if (spaceId) {
         const room = `space:${spaceId}`;
         await removeUserFromSpace(spaceId, socket.id);
-        socket.to(room).emit("user_left", { userId: (socket as Socket & { userId: string }).userId, socketId: socket.id });
+        socket.to(room).emit("user_left", { userId: socket.userId, socketId: socket.id });
       }
     });
   });
