@@ -81,7 +81,7 @@ router.post("/rooms", async (req: Request, res: Response) => {
         headers,
         body: JSON.stringify({
           title: `Office ${roomId}`,
-          preferred_region: "ap-south-1",
+          preferred_region: env.dyteRegion,
           record_on_start: false,
         }),
       });

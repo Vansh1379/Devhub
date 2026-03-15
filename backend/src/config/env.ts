@@ -17,6 +17,7 @@ export const env = {
   dyteOrgId: process.env.DYTE_ORG_ID ?? "",
   dyteApiKey: process.env.DYTE_API_KEY ?? "",
   dytePresetName: process.env.DYTE_PRESET_NAME ?? "group_call",
+  dyteRegion: process.env.DYTE_REGION ?? "ap-south-1",
   redisUrl: process.env.REDIS_URL ?? "",
 };
 
