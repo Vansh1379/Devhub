@@ -249,6 +249,12 @@ export default function Office() {
     });
 
     return () => {
+      socket.off("connect");
+      socket.off("space_state");
+      socket.off("user_joined");
+      socket.off("user_left");
+      socket.off("user_moved");
+      socket.off("chat_message");
       socket.emit("leave_space", { spaceId: state.spaceId });
       socket.disconnect();
       socketRef.current = null;
