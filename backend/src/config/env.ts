@@ -11,6 +11,7 @@ const required = (value: string | undefined, name: string): string => {
 
 export const env = {
   port: Number(process.env.PORT) || 4000,
+  corsOrigins: process.env.CORS_ORIGINS ?? "",
   dbUrl: required(process.env.DATABASE_URL, "DATABASE_URL"),
   jwtSecret: required(process.env.JWT_SECRET, "JWT_SECRET"),
   dyteAuthHeader: process.env.DYTE_AUTH_HEADER ?? "",

@@ -12,6 +12,15 @@ import {
 
 const JWT_SECRET = env.jwtSecret;
 
+const allowedOrigins = env.corsOrigins
+  ? env.corsOrigins.split(",").map((o) => o.trim())
+  : ["http://localhost:3000"];
+
+/** Strip HTML tags to prevent stored XSS via chat messages */
+function sanitizeHtml(input: string): string {
+  return input.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 interface AppSocket extends Socket {
   userId: string;
   currentSpaceId?: string;
@@ -36,7 +45,7 @@ function clampPosition(x: number, z: number): { x: number; z: number } {
 
 export function attachSocket(httpServer: HttpServer): Server {
   const io = new Server(httpServer, {
-    cors: { origin: "*" },
+    cors: { origin: allowedOrigins, credentials: true },
     pingTimeout: 60000,
     pingInterval: 25000,
   });
@@ -131,6 +140,7 @@ export function attachSocket(httpServer: HttpServer): Server {
       let content = typeof payload?.content === "string" ? payload.content.trim() : "";
       if (!channelType || !channelId || !content) return;
       if (content.length > MAX_CHAT_CONTENT_LENGTH) content = content.slice(0, MAX_CHAT_CONTENT_LENGTH);
+      content = sanitizeHtml(content);
       if (channelType !== "SPACE" && channelType !== "DM") return;
 
       try {
