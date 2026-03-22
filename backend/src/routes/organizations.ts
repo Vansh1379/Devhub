@@ -117,24 +117,20 @@ router.post("/join", async (req, res) => {
       return res.status(401).json({ error: "Invalid password" });
     }
 
-    const existingMembership = await prisma.orgMembership.findUnique({
+    await prisma.orgMembership.upsert({
       where: {
         userId_organizationId: {
           userId: req.user.userId,
           organizationId: organization.id,
         },
       },
+      create: {
+        userId: req.user.userId,
+        organizationId: organization.id,
+        role: "MEMBER",
+      },
+      update: {}, // already a member — no changes needed
     });
-
-    if (!existingMembership) {
-      await prisma.orgMembership.create({
-        data: {
-          userId: req.user.userId,
-          organizationId: organization.id,
-          role: "MEMBER",
-        },
-      });
-    }
 
     return res.json({ organizationId: organization.id });
   } catch (err) {

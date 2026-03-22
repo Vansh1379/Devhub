@@ -69,56 +69,64 @@ export function attachSocket(httpServer: HttpServer): Server {
     socket.userId = userId;
 
     socket.on("join_space", async (payload: { spaceId: string; displayName?: string; x?: number; y?: number; z?: number; direction?: string; avatar?: unknown }) => {
-      const spaceId = payload?.spaceId;
-      if (!spaceId || typeof spaceId !== "string") return;
-      const displayName = typeof payload.displayName === "string" && payload.displayName.trim() ? payload.displayName.trim() : "User";
-      let x = typeof payload.x === "number" ? payload.x : 0;
-      const y = typeof payload.y === "number" ? payload.y : 0;
-      let z = typeof payload.z === "number" ? payload.z : 0;
-      const direction = typeof payload.direction === "string" ? payload.direction : "down";
-      const avatar = payload.avatar ?? null;
+      try {
+        const spaceId = payload?.spaceId;
+        if (!spaceId || typeof spaceId !== "string") return;
+        const displayName = typeof payload.displayName === "string" && payload.displayName.trim() ? payload.displayName.trim() : "User";
+        let x = typeof payload.x === "number" ? payload.x : 0;
+        const y = typeof payload.y === "number" ? payload.y : 0;
+        let z = typeof payload.z === "number" ? payload.z : 0;
+        const direction = typeof payload.direction === "string" ? payload.direction : "down";
+        const avatar = payload.avatar ?? null;
 
-      const clamped = clampPosition(x, z);
-      x = clamped.x;
-      z = clamped.z;
+        const clamped = clampPosition(x, z);
+        x = clamped.x;
+        z = clamped.z;
 
-      const room = `space:${spaceId}`;
-      socket.join(room);
-      await setUserInSpace(spaceId, socket.id, {
-        userId,
-        displayName,
-        x,
-        y,
-        z,
-        direction,
-        avatar,
-      });
-      socket.currentSpaceId = spaceId;
+        const room = `space:${spaceId}`;
+        socket.join(room);
+        await setUserInSpace(spaceId, socket.id, {
+          userId,
+          displayName,
+          x,
+          y,
+          z,
+          direction,
+          avatar,
+        });
+        socket.currentSpaceId = spaceId;
 
-      const spaceUsers = await getSpaceUsers(spaceId);
-      const users = spaceUsers.map((u) => ({ userId: u.userId, socketId: u.socketId, displayName: u.displayName, x: u.x, y: u.y, z: u.z, direction: u.direction, avatar: u.avatar }));
-      socket.emit("space_state", { users });
+        const spaceUsers = await getSpaceUsers(spaceId);
+        const users = spaceUsers.map((u) => ({ userId: u.userId, socketId: u.socketId, displayName: u.displayName, x: u.x, y: u.y, z: u.z, direction: u.direction, avatar: u.avatar }));
+        socket.emit("space_state", { users });
 
-      socket.to(room).emit("user_joined", {
-        userId,
-        socketId: socket.id,
-        displayName,
-        x,
-        y,
-        z,
-        direction,
-        avatar,
-      });
+        socket.to(room).emit("user_joined", {
+          userId,
+          socketId: socket.id,
+          displayName,
+          x,
+          y,
+          z,
+          direction,
+          avatar,
+        });
+      } catch (err) {
+        console.error("[socket] join_space error:", err);
+      }
     });
 
     socket.on("leave_space", async (payload: { spaceId: string }) => {
-      const spaceId = payload?.spaceId ?? socket.currentSpaceId;
-      if (!spaceId) return;
-      const room = `space:${spaceId}`;
-      socket.leave(room);
-      await removeUserFromSpace(spaceId, socket.id);
-      socket.currentSpaceId = undefined;
-      socket.to(room).emit("user_left", { userId: socket.userId, socketId: socket.id });
+      try {
+        const spaceId = payload?.spaceId ?? socket.currentSpaceId;
+        if (!spaceId) return;
+        const room = `space:${spaceId}`;
+        socket.leave(room);
+        await removeUserFromSpace(spaceId, socket.id);
+        socket.currentSpaceId = undefined;
+        socket.to(room).emit("user_left", { userId: socket.userId, socketId: socket.id });
+      } catch (err) {
+        console.error("[socket] leave_space error:", err);
+      }
     });
 
     socket.on("join_dm", (payload: { otherUserId: string }) => {
@@ -171,6 +179,25 @@ export function attachSocket(httpServer: HttpServer): Server {
           io.to(`space:${channelId}`).emit("chat_message", payloadOut);
         } else {
           const otherUserId = channelId;
+          if (otherUserId === userId) return;
+
+          // Verify target user exists
+          const targetUser = await prisma.user.findUnique({ where: { id: otherUserId } });
+          if (!targetUser) return;
+
+          // Verify sender and target share at least one organization
+          const senderOrgs = await prisma.orgMembership.findMany({
+            where: { userId },
+            select: { organizationId: true },
+          });
+          const sharedOrg = await prisma.orgMembership.findFirst({
+            where: {
+              userId: otherUserId,
+              organizationId: { in: senderOrgs.map((m) => m.organizationId) },
+            },
+          });
+          if (!sharedOrg) return;
+
           const roomId = dmChannelId(userId, otherUserId);
           const msg = await prisma.chatMessage.create({
             data: { channelType: "DM", channelId: roomId, senderUserId: userId, content },
@@ -194,36 +221,44 @@ export function attachSocket(httpServer: HttpServer): Server {
     });
 
     socket.on("move", async (payload: { spaceId: string; x: number; y: number; z?: number; direction: string }) => {
-      const spaceId = payload?.spaceId;
-      if (!spaceId || typeof spaceId !== "string") return;
-      let x = typeof payload.x === "number" ? payload.x : 0;
-      const y = typeof payload.y === "number" ? payload.y : 0;
-      let z = typeof payload.z === "number" ? payload.z : 0;
-      const direction = typeof payload.direction === "string" ? payload.direction : "down";
+      try {
+        const spaceId = payload?.spaceId;
+        if (!spaceId || typeof spaceId !== "string") return;
+        let x = typeof payload.x === "number" ? payload.x : 0;
+        const y = typeof payload.y === "number" ? payload.y : 0;
+        let z = typeof payload.z === "number" ? payload.z : 0;
+        const direction = typeof payload.direction === "string" ? payload.direction : "down";
 
-      const clamped = clampPosition(x, z);
-      x = clamped.x;
-      z = clamped.z;
+        const clamped = clampPosition(x, z);
+        x = clamped.x;
+        z = clamped.z;
 
-      const updated = await updateUserPosition(spaceId, socket.id, { x, y, z, direction });
-      if (!updated) return;
+        const updated = await updateUserPosition(spaceId, socket.id, { x, y, z, direction });
+        if (!updated) return;
 
-      socket.to(`space:${spaceId}`).emit("user_moved", {
-        userId: socket.userId,
-        socketId: socket.id,
-        x,
-        y,
-        z,
-        direction,
-      });
+        socket.to(`space:${spaceId}`).emit("user_moved", {
+          userId: socket.userId,
+          socketId: socket.id,
+          x,
+          y,
+          z,
+          direction,
+        });
+      } catch (err) {
+        console.error("[socket] move error:", err);
+      }
     });
 
     socket.on("disconnect", async () => {
-      const spaceId = socket.currentSpaceId;
-      if (spaceId) {
-        const room = `space:${spaceId}`;
-        await removeUserFromSpace(spaceId, socket.id);
-        socket.to(room).emit("user_left", { userId: socket.userId, socketId: socket.id });
+      try {
+        const spaceId = socket.currentSpaceId;
+        if (spaceId) {
+          const room = `space:${spaceId}`;
+          await removeUserFromSpace(spaceId, socket.id);
+          socket.to(room).emit("user_left", { userId: socket.userId, socketId: socket.id });
+        }
+      } catch (err) {
+        console.error("[socket] disconnect error:", err);
       }
     });
   });

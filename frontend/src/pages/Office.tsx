@@ -37,6 +37,12 @@ export default function Office() {
   const sceneRef = useRef<OfficeScene | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const spaceIdRef = useRef<string | null>(null);
+  const userRef = useRef(user);
+
+  // Keep userRef in sync so socket handlers always read fresh user
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
 
   // Others state (for DM list)
   const [others, setOthers] = useState<Map<string, OtherPlayer>>(new Map());
@@ -232,12 +238,14 @@ export default function Office() {
     );
 
     socket.on("chat_message", (msg: ChatMessagePayload) => {
-      if (msg.channelType === "SPACE" && msg.channelId === state.spaceId) {
+      const currentSpaceId = spaceIdRef.current;
+      const currentUser = userRef.current;
+      if (msg.channelType === "SPACE" && msg.channelId === currentSpaceId) {
         setSpaceMessages((prev) => [...prev, msg]);
       }
-      if (msg.channelType === "DM" && user?.id) {
+      if (msg.channelType === "DM" && currentUser?.id) {
         const [id1, id2] = msg.channelId.split("_");
-        const peerId = id1 === user.id ? id2 : id1;
+        const peerId = id1 === currentUser.id ? id2 : id1;
         setDmMessagesByUser((prev) => {
           const list = prev.get(peerId) ?? [];
           if (list.some((m) => m.id === msg.id)) return prev;

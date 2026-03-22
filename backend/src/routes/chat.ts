@@ -142,6 +142,26 @@ router.get("/dms/:otherUserId/messages", async (req, res) => {
       return res.status(400).json({ error: "Valid otherUserId required" });
     }
 
+    // Verify the other user exists
+    const otherUser = await prisma.user.findUnique({ where: { id: otherUserId } });
+    if (!otherUser) return res.status(404).json({ error: "User not found" });
+
+    // Verify both users share at least one organization
+    const sharedOrg = await prisma.orgMembership.findFirst({
+      where: {
+        userId,
+        organizationId: {
+          in: (
+            await prisma.orgMembership.findMany({
+              where: { userId: otherUserId },
+              select: { organizationId: true },
+            })
+          ).map((m) => m.organizationId),
+        },
+      },
+    });
+    if (!sharedOrg) return res.status(403).json({ error: "Cannot access DMs with this user" });
+
     const channelId = dmChannelId(userId, otherUserId);
 
     const messages = await prisma.chatMessage.findMany({
